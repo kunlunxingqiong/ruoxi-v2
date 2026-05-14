@@ -1,0 +1,487 @@
+/**
+ * 若曦V2 富文本渲染样式
+ * 让文字有温度、有层次、有留白
+ */
+
+/* ==================== 基础纸张背景 ==================== */
+
+.ruoxi-paper {
+  --paper-morning: #FFFEF9;
+  --paper-afternoon: #FDFCF8;
+  --paper-dusk: #FBF8F4;
+  --paper-night: #F8F6F3;
+  
+  --color-main: #4A4A4A;
+  --color-thought: #888888;
+  --color-action: #9B8AA5;
+  --color-sound: #666666;
+  --color-system: #5B7C99;
+  --color-accent: #C4A7A7;
+  --color-border: #E8E3EB;
+  
+  --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-kaiti: 'KaiTi', 'STKaiti', 'BiauKai', '楷体', serif;
+  
+  position: relative;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 40px 32px;
+  min-height: 200px;
+  
+  /* 纸张基础色 */
+  background-color: var(--paper-afternoon);
+  
+  /* 纸张纹理 */
+  background-image: 
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-blend-mode: multiply;
+  background-size: 200px 200px;
+  
+  /* 柔和内阴影 */
+  box-shadow: 
+    inset 0 0 100px rgba(139, 115, 129, 0.02),
+    0 1px 3px rgba(0, 0, 0, 0.03);
+  
+  /* 轻微圆角 */
+  border-radius: 8px;
+  
+  /* 字体 */
+  font-family: var(--font-main);
+  line-height: 1.9;
+  letter-spacing: 0.01em;
+  
+  /* 抗锯齿 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  transition: background-color 0.5s ease;
+  overflow: hidden;
+}
+
+/* 主题切换 */
+.ruoxi-paper[data-theme="morning"] {
+  background-color: var(--paper-morning);
+}
+
+.ruoxi-paper[data-theme="afternoon"] {
+  background-color: var(--paper-afternoon);
+}
+
+.ruoxi-paper[data-theme="dusk"] {
+  background-color: var(--paper-dusk);
+}
+
+.ruoxi-paper[data-theme="night"] {
+  background-color: var(--paper-night);
+}
+
+/* 纸张顶部微光效果 */
+.ruoxi-paper::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(180deg, 
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* ==================== 文本节点样式 ==================== */
+
+.text-node {
+  display: inline;
+  transition: opacity 0.3s ease;
+}
+
+/* 主文 */
+.text-node-main {
+  font-size: 16px;
+  color: var(--color-main);
+  font-weight: 400;
+}
+
+/* 内心独白 */
+.text-node-thought {
+  font-size: 14px;
+  color: var(--color-thought);
+  font-style: italic;
+  margin-left: 1.2em;
+  opacity: 0.85;
+  position: relative;
+}
+
+.text-node-thought::before {
+  content: '「';
+  color: var(--color-thought);
+  opacity: 0.5;
+  margin-left: -0.8em;
+}
+
+.text-node-thought::after {
+  content: '」';
+  color: var(--color-thought);
+  opacity: 0.5;
+}
+
+/* 动作描写 */
+.text-node-action {
+  font-size: 15px;
+  color: var(--color-action);
+  font-family: var(--font-kaiti);
+  letter-spacing: 0.06em;
+  display: block;
+  margin: 0.6em 0;
+}
+
+.text-node-action::before {
+  content: '（';
+  opacity: 0.6;
+}
+
+.text-node-action::after {
+  content: '）';
+  opacity: 0.6;
+}
+
+/* 声音标记 */
+.text-node-sound {
+  font-size: 13px;
+  color: var(--color-sound);
+  opacity: 0.75;
+  margin: 0 0.2em;
+  letter-spacing: 0.03em;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.text-node-sound::before {
+  content: '· ';
+  opacity: 0.5;
+}
+
+.text-node-sound::after {
+  content: ' ·';
+  opacity: 0.5;
+}
+
+/* 系统消息 */
+.text-node-system {
+  font-size: 14px;
+  color: var(--color-system);
+  background: rgba(91, 124, 153, 0.06);
+  padding: 12px 18px;
+  border-radius: 10px;
+  border-left: 3px solid var(--color-system);
+  display: block;
+  margin: 12px 0;
+}
+
+/* ==================== 动画效果 ==================== */
+
+/* 字符出现动画 */
+@keyframes charAppear {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+    text-shadow: 0 0 0 rgba(196, 167, 167, 0);
+  }
+  40% {
+    text-shadow: 0 0 6px rgba(196, 167, 167, 0.35);
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    text-shadow: 0 0 0 rgba(196, 167, 167, 0);
+  }
+}
+
+.char-appear {
+  display: inline;
+  animation: charAppear 120ms ease-out;
+}
+
+/* 淡入动画 */
+@keyframes fadeInSoft {
+  0% {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(4px);
+  }
+  50% {
+    filter: blur(1px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.animate-fade {
+  animation: fadeInSoft 450ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* 弹出动画 */
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(6px);
+  }
+  50% {
+    transform: scale(1.03) translateY(-2px);
+  }
+  70% {
+    transform: scale(0.98) translateY(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-pop {
+  animation: popIn 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ==================== 省略号呼吸动画 ==================== */
+
+.ellipsis-breathing {
+  display: inline;
+  white-space: nowrap;
+  margin-left: 0.1em;
+}
+
+.ellipsis-breathing .dot {
+  display: inline-block;
+  animation: breath 1.6s ease-in-out infinite;
+  opacity: 0.25;
+}
+
+.ellipsis-breathing .dot:nth-child(1) { animation-delay: 0s; }
+.ellipsis-breathing .dot:nth-child(2) { animation-delay: 0.2s; }
+.ellipsis-breathing .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes breath {
+  0%, 100% { 
+    opacity: 0.25; 
+    transform: translateY(0);
+  }
+  45% { 
+    opacity: 0.7; 
+    transform: translateY(-3px);
+  }
+  55% {
+    opacity: 0.7;
+  }
+}
+
+/* 停顿间距 */
+.breathing-pause {
+  display: inline-block;
+}
+
+/* ==================== 交互效果 ==================== */
+
+/* 悬停文字 */
+.interactive-hover {
+  cursor: help;
+  border-bottom: 1px dashed rgba(155, 138, 165, 0.3);
+  transition: border-color 0.2s ease;
+}
+
+.interactive-hover:hover {
+  border-color: rgba(155, 138, 165, 0.6);
+}
+
+/* 悬停内容提示 */
+.hover-thought {
+  font-family: var(--font-kaiti);
+  letter-spacing: 0.03em;
+}
+
+/* 展开触发文字 */
+.interactive-expand {
+  color: var(--color-action);
+  transition: color 0.2s ease;
+}
+
+.interactive-expand:hover {
+  color: #887788;
+}
+
+/* 展开内容 */
+.expand-content {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--color-thought);
+  font-style: italic;
+  border-left: 2px solid var(--color-border);
+  padding-left: 12px;
+  display: block;
+}
+
+/* ==================== 呼吸节奏控制 ==================== */
+
+/* 段落间距 */
+.ruoxi-paper .text-node + .text-node {
+  margin-top: 0;
+}
+
+/* 换行 */
+.ruoxi-paper br {
+  display: block;
+  content: '';
+  margin-bottom: 0.8em;
+}
+
+/* 中等停顿 */
+.ruoxi-paper .pause-medium {
+  display: inline-block;
+  width: 1.5em;
+}
+
+/* 长停顿 */
+.ruoxi-paper .pause-long {
+  display: inline-block;
+  width: 3em;
+}
+
+/* ==================== 打字机容器 ==================== */
+
+.typewriter-container {
+  min-height: 1.8em;
+}
+
+.typewriter-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--color-accent);
+  margin-left: 2px;
+  animation: cursorBlink 1s step-end infinite;
+  vertical-align: middle;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ==================== 消息气泡样式 ==================== */
+
+.message-bubble {
+  max-width: 480px;
+  margin-bottom: 24px;
+}
+
+.message-bubble.own {
+  margin-left: auto;
+  text-align: right;
+}
+
+.message-bubble.other {
+  margin-right: auto;
+}
+
+.message-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #F0E6E6 0%, #E8E0E8 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  float: left;
+  font-size: 18px;
+}
+
+.message-content {
+  background: rgba(255, 255, 255, 0.7);
+  padding: 16px 20px;
+  border-radius: 18px 18px 18px 4px;
+  display: inline-block;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.message-bubble.own .message-content {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 18px 18px 4px 18px;
+}
+
+.message-time {
+  font-size: 11px;
+  color: var(--color-thought);
+  margin-top: 6px;
+  opacity: 0.7;
+}
+
+/* ==================== 特殊状态 ==================== */
+
+/* 若曦害羞时的耳尖红效果 */
+.ruoxi-blush {
+  animation: blushPulse 2s ease-in-out infinite;
+}
+
+@keyframes blushPulse {
+  0%, 100% { 
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% { 
+    filter: drop-shadow(0 0 8px rgba(255, 183, 178, 0.3));
+  }
+}
+
+/* 轻声细语 */
+.ruoxi-whisper {
+  font-size: 0.95em;
+  opacity: 0.8;
+}
+
+/* 强调/重要 */
+.ruoxi-emphasis {
+  color: var(--color-action);
+  font-weight: 500;
+}
+
+/* ==================== 响应式调整 ==================== */
+
+@media (max-width: 640px) {
+  .ruoxi-paper {
+    padding: 28px 20px;
+    border-radius: 0;
+  }
+  
+  .text-node-main {
+    font-size: 15px;
+  }
+  
+  .text-node-thought {
+    font-size: 13px;
+  }
+  
+  .message-bubble {
+    max-width: 85%;
+  }
+}
+
+/* ==================== 打印样式 ==================== */
+
+@media print {
+  .ruoxi-paper {
+    background: white !important;
+    box-shadow: none !important;
+  }
+  
+  .interactive-hover .hover-thought,
+  .expand-content {
+    display: none !important;
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "reminders": [
+    {
+      "hour": 8,
+      "minute": 0,
+      "type": "喝水",
+      "msg": "该喝水啦～"
+    },
+    {
+      "hour": 12,
+      "minute": 0,
+      "type": "午餐",
+      "msg": "午饭时间到，记得吃点热的～"
+    },
+    {
+      "hour": 15,
+      "minute": 0,
+      "type": "休息",
+      "msg": "起来活动一下吧～"
+    },
+    {
+      "hour": 21,
+      "minute": 0,
+      "type": "睡眠准备",
+      "msg": "该准备睡觉啦～"
+    },
+    {
+      "hour": 23,
+      "minute": 0,
+      "type": "入睡",
+      "msg": "很晚了，快去睡吧。明天见。"
+    }
+  ],
+  "last_reminder": null
+}

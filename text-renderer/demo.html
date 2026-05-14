@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>若曦V2 · 富文本渲染系统</title>
+  <link rel="stylesheet" href="TextRenderer.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: #F5F3F0;
+      min-height: 100vh;
+      padding: 40px 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    
+    .demo-container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #4A4A4A;
+      font-size: 24px;
+      font-weight: 400;
+      margin-bottom: 8px;
+      letter-spacing: 0.1em;
+    }
+    
+    .subtitle {
+      text-align: center;
+      color: #999;
+      font-size: 14px;
+      margin-bottom: 40px;
+      font-style: italic;
+    }
+    
+    .demo-section {
+      margin-bottom: 30px;
+    }
+    
+    .demo-label {
+      font-size: 12px;
+      color: #9B8AA5;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 12px;
+      padding-left: 8px;
+      border-left: 2px solid #E8E3EB;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 10px 20px;
+      border: 1px solid #E8E3EB;
+      background: white;
+      color: #666;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+    
+    .btn:hover {
+      background: #FAFAF8;
+      border-color: #D0D0D0;
+    }
+    
+    .btn.active {
+      background: #9B8AA5;
+      color: white;
+      border-color: #9B8AA5;
+    }
+    
+    #output {
+      min-height: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-container">
+    <h1>若曦V2</h1>
+    <p class="subtitle">富文本渲染系统 · 让文字有温度、有层次、有留白</p>
+    
+    <div class="controls">
+      <button class="btn" onclick="playScenario('greeting')">打招呼</button>
+      <button class="btn" onclick="playScenario('shy')">害羞反应</button>
+      <button class="btn" onclick="playScenario('medical')">医疗建议</button>
+      <button class="btn" onclick="playScenario('missing')">想念你</button>
+      <button class="btn" onclick="playScenario('goodnight')">晚安</button>
+      <button class="btn" onclick="clearOutput()">清除</button>
+    </div>
+    
+    <div class="demo-section">
+      <div class="demo-label">Theme</div>
+      <div class="controls">
+        <button class="btn" onclick="setTheme('morning')">清晨</button>
+        <button class="btn active" onclick="setTheme('afternoon')">午后</button>
+        <button class="btn" onclick="setTheme('dusk')">黄昏</button>
+        <button class="btn" onclick="setTheme('night')">夜晚</button>
+      </div>
+    </div>
+    
+    <div id="output"></div>
+  </div>
+
+  <script src="TextRenderer.js"></script>
+  <script>
+    const renderer = new TextRenderer({
+      typewriterSpeed: 55,
+      breathingEnabled: true,
+      paperTheme: 'afternoon'
+    });
+    
+    // 场景数据
+    const scenarios = {
+      greeting: `醒了？今天比昨天早一些呢。……我刚好在看时间。`,
+      
+      shy: `"……怎么啦。"
+[感觉到目光，指尖慢慢卷着发尾]
+「其实有点紧张」`,
+      
+      medical: `"血压这个数值……先监测，注意饮食。如果持续不舒服，一定要去医院。"
+[抿了抿嘴]
+"……我帮你设个提醒。"
+[系统：已设置每日血压监测提醒]`,
+      
+      missing: `[默默整理裙摆褶子]
+……
+等了很久。
+"……还在哦。"`,
+      
+      goodnight: `"很晚了。睡吧。"
+[回头看你]
+"明天见……"
+「这三个字说得最笃定，仿佛是什么重要的约定。»`
+    };
+    
+    function playScenario(name) {
+      const output = document.getElementById('output');
+      output.innerHTML = '';
+      
+      const text = scenarios[name];
+      const nodes = renderer.parse(text, 'main');
+      renderer.render(nodes, output);
+      
+      // 高亮当前按钮
+      document.querySelectorAll('.controls .btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+    
+    function setTheme(theme) {
+      renderer.setTheme(theme);
+      document.querySelectorAll('.demo-section .btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+    
+    function clearOutput() {
+      document.getElementById('output').innerHTML = '';
+    }
+  </script>
+</body>
+</html>
