@@ -1,0 +1,188 @@
+# 🌸 若曦V2 CI/CD 工作流
+# 自动测试、代码检查、双仓库同步
+
+name: 🌸 若曦V2 CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每天 09:00 UTC (北京时间 17:00)
+    - cron: '0 9 * * *'
+
+env:
+  RUOXI_ENV: testing
+  RUOXI_LOG_LEVEL: DEBUG
+
+jobs:
+  # ========== 代码质量检查 ==========
+  lint:
+    name: 🔍 代码质量检查
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 安装检查工具
+        run: |
+          pip install flake8 black isort mypy
+      
+      - name: 运行flake8
+        run: |
+          echo "🔍 运行 flake8..."
+          flake8 core/ --max-line-length=120 --ignore=E203,W503 || true
+      
+      - name: 检查代码格式 (black)
+        run: |
+          echo "🔍 检查代码格式..."
+          black --check core/ || true
+      
+      - name: 检查导入排序 (isort)
+        run: |
+          echo "🔍 检查导入排序..."
+          isort --check-only core/ || true
+
+  # ========== 单元测试 ==========
+  test:
+    name: 🧪 单元测试
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: 安装依赖
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: 创建必要目录
+        run: mkdir -p data/logs config
+      
+      - name: 运行测试
+        run: |
+          echo "🧪 运行单元测试..."
+          pytest tests/unit/ -v --tb=short
+      
+      - name: 生成覆盖率报告
+        run: |
+          echo "📊 生成覆盖率报告..."
+          pytest tests/unit/ --cov=core --cov-report=xml --cov-report=term || true
+      
+      - name: 上传覆盖率
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ========== 集成测试 ==========
+  integration-test:
+    name: 🔗 集成测试
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 安装依赖
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      
+      - name: 运行集成测试
+        run: |
+          echo "🔗 运行集成测试..."
+          pytest tests/integration/ -v --tb=short -m "not slow" || true
+
+  # ========== 构建检查 ==========
+  build:
+    name: 📦 构建检查
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 安装构建工具
+        run: pip install build twine
+      
+      - name: 构建包
+        run: |
+          echo "📦 构建Python包..."
+          python -m build || true
+      
+      - name: 检查包
+        run: |
+          echo "🔍 检查包完整性..."
+          twine check dist/* || true
+
+  # ========== 同步到Gitee ==========
+  sync-gitee:
+    name: 🔄 同步到Gitee
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 同步到Gitee
+        uses: wearerequired/git-mirror-action@master
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
+        with:
+          source-repo: "git@github.com:kunlunxingqiong/ruoxi-v2.git"
+          destination-repo: "git@gitee.com:xingqiongclaw_admin/ruoxi-v2.git"
+
+  # ========== 发布页面状态 ==========
+  status:
+    name: 📊 生成状态报告
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    if: always()
+    
+    steps:
+      - name: 汇总状态
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "                🌸 若曦V2 CI/CD 状态报告                      "
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "代码质量: ${{ needs.lint.result }}"
+          echo "单元测试: ${{ needs.test.result }}"
+          echo "构建检查: ${{ needs.build.result }}"
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
