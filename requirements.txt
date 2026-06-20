@@ -5,42 +5,52 @@
 pyyaml>=6.0              # YAML配置支持
 python-dotenv>=1.0.0     # 环境变量管理
 pydantic>=2.0.0          # 数据验证
+email-validator>=2.0.0   # 邮箱验证
 
-# Web框架 (二选一)
+# Web框架 (FastAPI)
 fastapi>=0.100.0         # 推荐：FastAPI
 uvicorn[standard]>=0.23.0 # ASGI服务器
 websockets>=11.0         # WebSocket支持
-# flask>=2.3.0           # 备选：Flask
+httpx>=0.24.0            # 异步HTTP客户端
 
 # 认证与安全
 python-jose[cryptography]>=3.3.0  # JWT
 passlib[bcrypt]>=1.7.4   # 密码哈希
 python-multipart>=0.0.6  # 表单解析 (OAuth2)
 
-# AI模型客户端 (按需安装)
-# google-generativeai   # Google Gemini API
-# openai>=1.0.0         # OpenAI兼容API
-# aiohttp>=3.8.0        # 异步HTTP客户端
-# httpx>=0.24.0         # 同步/异步HTTP
+# AI模型客户端 (★ 核心依赖 - 永久免费API ★)
+google-generativeai>=0.7.0  # Google Gemini (永久免费)
+groq>=0.9.0              # Groq极速API
+openai>=1.0.0            # OpenAI兼容API (Together/Cohere)
+aiohttp>=3.8.0           # 异步HTTP备用
 
 # 数据库
-# sqlalchemy>=2.0.0     # ORM
-# aiosqlite>=0.19.0     # 异步SQLite
-# asyncpg>=0.28.0       # 异步PostgreSQL
+sqlalchemy>=2.0.0      # ORM
+alembic>=1.12.0        # 数据库迁移
+aiosqlite>=0.19.0      # 异步SQLite
+asyncpg>=0.28.0        # 异步PostgreSQL (生产)
+psycopg2-binary>=2.9.0 # PostgreSQL驱动
 
-# 记忆与向量搜索
-# chromadb>=0.4.0       # 向量数据库
-# sentence-transformers # 文本嵌入
+# 性能与缓存
+redis>=5.0.0           # Redis缓存
+aioredis>=2.0.0        # 异步Redis
+orjson>=3.9.0          # 高性能JSON
 
 # 日志与监控
-# loguru>=0.7.0         # 高级日志
-# prometheus-client     # 性能监控
+prometheus-client>=0.18.0  # Prometheus指标
+psutil>=5.9.0          # 系统监控
+
+# 数据科学 (健康分析用)
+numpy>=1.24.0          # 数值计算
+pandas>=2.0.0          # 数据分析
 
 # 开发工具
 pytest>=7.4.0          # 测试框架
 pytest-asyncio>=0.21.0 # 异步测试
+pytest-cov>=4.1.0      # 覆盖率
 black>=23.0.0          # 代码格式化
 flake8>=6.0.0          # 代码检查
+isort>=5.12.0          # 导入排序
 mypy>=1.5.0            # 类型检查
 
 # 生产部署

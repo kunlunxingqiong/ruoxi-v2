@@ -9,6 +9,7 @@ from datetime import datetime
 
 from core.log_manager import get_logger
 from core.exceptions import ValidationException, AIException
+from core.ai.model_manager import ai_manager
 
 logger = get_logger(__name__)
 
@@ -115,21 +116,35 @@ async def chat(request: ChatRequest):
     
     logger.info(f"💬 聊天请求 | 会话: {session_id} | 消息长度: {len(request.message)}")
     
-    # TODO: 调用AI模型获取回复（当前为模拟）
+    # 调用AI模型获取回复
     try:
-        # 模拟AI处理
-        response_content = f"收到消息: {request.message[:50]}..."
+        # 构建消息列表
+        messages = [
+            {"role": "system", "content": "你是若曦，一个温柔体贴的AI医生朋友。你擅长健康管理、情感陪伴和日常对话。回答要温暖、友善，适当使用emoji。"},
+            {"role": "user", "content": request.message}
+        ]
         
-        # 真实实现中:
-        # from ai import run_model
-        # response = await run_model(request.message, context=request.context)
+        if request.context:
+            # 添加上下文
+            for msg in request.context:
+                messages.append({"role": msg.role, "content": msg.content})
+        
+        # 调用AI管理器生成回复
+        ai_response = await ai_manager.generate(
+            messages=messages,
+            stream=request.stream,
+            use_cache=True
+        )
         
         # 构建回复
         assistant_message = ChatMessage(
             role="assistant",
-            content="🌸 曦曦收到你的消息啦~\n\n（这是模拟回复，真实AI集成即将上线）\n\n你想聊什么话题呢？",
+            content=ai_response.content,
             timestamp=datetime.utcnow().isoformat()
         )
+        
+        tokens_used = ai_response.tokens_output
+        model_used = ai_response.model_used
         
         response_time = int((time.time() - start_time) * 1000)
         
@@ -148,9 +163,9 @@ async def chat(request: ChatRequest):
             session_id=session_id,
             message=assistant_message,
             memory_used=request.use_memory,
-            tokens_used=len(request.message) + len(assistant_message.content),
-            model_used="gemini-2.0-flash (模拟)",
-            response_time_ms=response_time
+            tokens_used=tokens_used,
+            model_used=model_used,
+            response_time_ms=max(response_time, ai_response.response_time_ms)
         )
         
     except Exception as e:
