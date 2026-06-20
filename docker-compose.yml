@@ -1,0 +1,189 @@
+# 🌸 若曦V2 - Docker Compose 配置
+version: '3.8'
+
+services:
+  # PostgreSQL数据库
+  db:
+    image: postgres:15-alpine
+    container_name: ruoxi-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ruoxi
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ruoxi_secure_pwd}
+      POSTGRES_DB: ruoxi_health
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruoxi -d ruoxi_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ruoxi-network
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: ruoxi-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-ruoxi_redis}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ruoxi-network
+
+  # 后端API服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ruoxi-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://ruoxi:${DB_PASSWORD:-ruoxi_secure_pwd}@db:5432/ruoxi_health
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-ruoxi_redis}@redis:6379/0
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env.production
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ruoxi-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Celery任务队列
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: ruoxi-celery
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://ruoxi:${DB_PASSWORD:-ruoxi_secure_pwd}@db:5432/ruoxi_health
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-ruoxi_redis}@redis:6379/0
+      - C_FORCE_ROOT=true
+    env_file:
+      - .env.production
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - db
+    networks:
+      - ruoxi-network
+    command: celery -A tasks.celery_config worker --loglevel=info --concurrency=4
+
+  # Celery定时任务调度
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: ruoxi-celery-beat
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://ruoxi:${DB_PASSWORD:-ruoxi_secure_pwd}@db:5432/ruoxi_health
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-ruoxi_redis}@redis:6379/0
+    env_file:
+      - .env.production
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - db
+      - celery
+    networks:
+      - ruoxi-network
+    command: celery -A tasks.celery_config beat --loglevel=info
+
+  # 前端（可选，如果有静态文件服务）
+  frontend:
+    image: nginx:alpine
+    container_name: ruoxi-frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    networks:
+      - ruoxi-network
+
+  # 监控 - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ruoxi-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - ruoxi-network
+
+  # 监控 - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ruoxi-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - ruoxi-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  ruoxi-network:
+    driver: bridge
