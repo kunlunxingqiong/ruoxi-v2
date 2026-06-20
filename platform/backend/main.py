@@ -1,341 +1,192 @@
-"""若曦V2 FastAPI后端主文件"""
-from fastapi import FastAPI, HTTPException, Depends, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPBasic, HTTPBasicCredentials
-from contextlib import asynccontextmanager
-from typing import Optional
-from datetime import datetime, timedelta
-import secrets
-
-import sys
+"""
+🌸 若曦V2 FastAPI 主入口
+若曦的Web服务大脑，提供RESTful API接口
+"""
 import os
+import sys
+from pathlib import Path
 
 # 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.enhancement.text_rendering import EmotionalTypography, InkBleedEffect, MouseFollower
-from core.enhancement.language_dna_adaptive import (
-    AdaptiveLanguageGenerator, 
-    DocumentType,
-    DocumentTypeRouter
-)
-from core.enhancement.edge_moments import EdgeMomentHandler, EdgeMomentType
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+# 导入核心模块
+from core.config_manager import config
+from core.log_manager import get_logger
+from core.exceptions import GlobalExceptionHandler, RuoxiException
+from core.database_models import db
+
+# 导入API路由
+from api.v1 import router as v1_router
+from api.health import router as health_router
+
+# 获取日志器
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    # 启动时初始化
-    print("🌸 若曦V2 后端服务启动")
+    """
+    应用生命周期管理
+    启动时执行初始化，关闭时执行清理
+    """
+    # 启动
+    logger.info("🌸 若曦V2 服务启动中...")
+    
+    # 初始化数据库
+    try:
+        db.create_tables()
+        logger.info("✅ 数据库初始化完成")
+    except Exception as e:
+        logger.warning(f"⚠️ 数据库初始化警告: {e}")
+    
+    # 加载配置
+    logger.info(f"📊 配置加载完成: {config.get('app.name')} v{config.get('app.version')}")
+    logger.info(f"🔧 环境: {config.get('app.debug') and '开发' or '生产'}")
+    
     yield
-    # 关闭时清理
-    print("🌸 若曦V2 后端服务关闭")
+    
+    # 关闭
+    logger.info("🌸 若曦V2 服务关闭中...")
 
 
+# 创建FastAPI应用
 app = FastAPI(
-    title="若曦V2 API",
-    description="智能少女AI交互系统后端",
-    version="2.0.0",
-    lifespan=lifespan
+    title=config.get("app.name", "若曦V2"),
+    description=config.get("app.description", "AI医生朋友 - 带有记忆系统和健康提醒"),
+    version=config.get("app.version", "2.0.0"),
+    docs_url="/docs" if config.get("app.debug") else None,
+    redoc_url="/redoc" if config.get("app.debug") else None,
+    openapi_url="/openapi.json" if config.get("app.debug") else None,
+    lifespan=lifespan,
 )
 
-# CORS中间件
+# CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.get("api.cors_origins", ["*"]),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 安全
-security = HTTPBearer()
 
-# 模拟用户数据库 (生产环境应使用真实数据库)
-USERS = {
-    "test_user": {
-        "password": "correct_password",
-        "user_id": "user_001"
-    }
-}
-
-# Token存储 (生产环境应使用Redis)
-active_tokens = {}
-
-# 若曦状态存储
-ruoxi_state = {
-    "biological": {
-        "hormones": {
-            "cortisol": 0.3,
-            "oxytocin": 0.7,
-            "dopamine": 0.6
-        },
-        "heart_rate": 72,
-        "circadian_phase": "evening",
-        "last_updated": datetime.now().isoformat()
-    },
-    "emotional": {
-        "attachment_level": 0.75,
-        "trust_index": 0.82,
-        "current_mood": "tender",
-        "stress_level": 0.2
-    }
-}
-
-# 聊天历史存储
-chat_history = []
-
-# 初始化核心组件
-text_renderer = EmotionalTypography()
-language_generator = AdaptiveLanguageGenerator()
-edge_handler = EdgeMomentHandler()
-doc_router = DocumentTypeRouter()
-
-
-@app.get("/")
-async def root():
-    """根端点"""
-    return {
-        "name": "若曦V2",
-        "version": "2.0.0",
-        "status": "running",
-        "message": "林若曦/阿芙 - 会医术的17岁高三少女"
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """健康检查"""
-    return {
-        "status": "healthy",
-        "services": {
-            "text_renderer": True,
-            "language_generator": True,
-            "edge_handler": True
+# 全局异常处理
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理器"""
+    error_response = GlobalExceptionHandler.handle_exception(exc)
+    
+    # 记录错误
+    logger.error(
+        f"请求异常: {request.url.path} - {exc}",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "error_code": error_response.get("error_code"),
+            "error_message": error_response.get("message")
         }
-    }
-
-
-@app.post("/api/render")
-async def render_text(request: dict):
-    """渲染文本"""
-    content = request.get("content", "")
-    emotion = request.get("emotion", "tender")
-    
-    result = text_renderer.apply_emotion_style(content, emotion)
-    return {
-        "html": result.get("html", content),
-        "text": result.get("text", content),
-        "effects": result.get("effects", {}),
-        "timing": result.get("timing", {})
-    }
-
-
-@app.post("/api/adapt")
-async def adapt_text(request: dict):
-    """自适应语言生成"""
-    content = request.get("content", "")
-    doc_type = request.get("doc_type", "chat")
-    emotional_state = request.get("emotional_state", {})
-    
-    # 映射文档类型字符串到枚举
-    type_mapping = {
-        "chat": DocumentType.CHAT,
-        "email": DocumentType.EMAIL,
-        "diary": DocumentType.DIARY,
-        "note": DocumentType.NOTE,
-        "letter": DocumentType.LETTER
-    }
-    
-    doc_type_enum = type_mapping.get(doc_type, DocumentType.CHAT)
-    
-    result = language_generator.generate_adaptive_text(
-        content,
-        doc_type_enum,
-        emotional_state
     )
     
-    return {
-        "html": f'<p>{result["transformed"]}</p>',
-        "text": result["transformed"],
-        "original": result["original"],
-        "document_type": result["document_type"],
-        "dna_profile": {
-            "ellipsis_frequency": result["dna_profile"].ellipsis_frequency,
-            "sentence_length_avg": result["dna_profile"].sentence_length_avg
+    # 如果是RuoxiException，提取状态码
+    status_code = 500
+    if isinstance(exc, RuoxiException):
+        if exc.error_code.code >= 2000 and exc.error_code.code < 3000:
+            status_code = 503  # AI服务问题
+        elif exc.error_code.code >= 4000:
+            status_code = 503  # 数据库问题
+    
+    return JSONResponse(
+        status_code=status_code,
+        content=error_response
+    )
+
+
+# 请求日志中间件
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """记录所有请求"""
+    import time
+    
+    start_time = time.time()
+    
+    # 记录请求开始
+    logger.info(
+        f"📥 请求 {request.method} {request.url.path}",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "client": request.client.host if request.client else None
         }
-    }
-
-
-@app.post("/api/edge")
-async def handle_edge_moment(request: dict):
-    """处理边缘时刻"""
-    moment_type = request.get("moment_type", "silence")
-    intensity = request.get("intensity", 0.5)
+    )
     
-    # 映射边缘类型
-    type_mapping = {
-        "silence": EdgeMomentType.SILENCE,
-        "return": EdgeMomentType.RETURN,
-        "long_wait": EdgeMomentType.LONG_WAIT
-    }
-    
-    edge_type = type_mapping.get(moment_type, EdgeMomentType.SILENCE)
-    result = edge_handler.generate_response(edge_type, intensity)
-    
-    return {
-        "html": f'<p>{result}</p>',
-        "text": result,
-        "moment_type": moment_type
-    }
-
-
-@app.post("/api/chat")
-async def chat(request: dict):
-    """聊天接口"""
-    start_time = datetime.now()
-    message = request.get("message", "")
-    session_id = request.get("session_id")
-    
-    # 简单的回复生成
-    if message.startswith("你好"):
-        response = "🌸 啊，回来了。今天比昨天早呢。"
-    elif "名字" in message:
-        response = "🌸 我是林若曦...也可以叫我阿芙。"
-    elif "健康" in message or "身体" in message:
-        response = "💜 这个症状...建议你先监测一下，如果持续不舒服一定要去医院。"
-    else:
-        response = "🌸 嗯...我在听。你说，我记着呢。"
-    
-    # 记录聊天历史
-    chat_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "session_id": session_id,
-        "message": message,
-        "response": response
-    }
-    chat_history.append(chat_entry)
+    # 处理请求
+    response = await call_next(request)
     
     # 计算响应时间
-    end_time = datetime.now()
-    response_time_ms = int((end_time - start_time).total_seconds() * 1000)
+    process_time = (time.time() - start_time) * 1000  # 毫秒
     
+    # 记录请求结束
+    logger.info(
+        f"📤 响应 {request.method} {request.url.path} - {response.status_code} ({process_time:.2f}ms)",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "process_time_ms": process_time
+        }
+    )
+    
+    # 添加响应头
+    response.headers["X-Process-Time"] = f"{process_time:.2f}ms"
+    response.headers["X-Ruoxi-Version"] = config.get("app.version")
+    
+    return response
+
+
+# 注册路由
+app.include_router(health_router)  # 健康检查 (无版本前缀)
+app.include_router(v1_router, prefix="/api/v1")  # v1 API
+
+
+# 根路由
+@app.get("/")
+async def root():
+    """根路由 - 服务信息"""
     return {
-        "response": response,
-        "session_id": session_id or "new_session",
-        "emotion_state": {
-            "current": "tender",
-            "intensity": 0.7
-        },
-        "response_time_ms": response_time_ms
+        "name": config.get("app.name"),
+        "version": config.get("app.version"),
+        "description": config.get("app.description"),
+        "status": "running",
+        "docs": "/docs" if config.get("app.debug") else None,
+        "health": "/health"
     }
-
-
-# ========== 认证端点 ==========
-
-@app.post("/api/auth/login")
-async def login(credentials: dict):
-    """用户登录"""
-    username = credentials.get("username")
-    password = credentials.get("password")
-    
-    user = USERS.get(username)
-    if not user or user["password"] != password:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
-        )
-    
-    # 生成访问token
-    access_token = secrets.token_urlsafe(32)
-    active_tokens[access_token] = {
-        "user_id": user["user_id"],
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(hours=24)
-    }
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": 86400
-    }
-
-
-@app.post("/api/auth/refresh")
-async def refresh_token(request: Request):
-    """刷新Token"""
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header"
-        )
-    
-    old_token = auth_header.replace("Bearer ", "")
-    token_data = active_tokens.get(old_token)
-    
-    if not token_data:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
-    
-    # 生成新token
-    new_token = secrets.token_urlsafe(32)
-    active_tokens[new_token] = {
-        "user_id": token_data["user_id"],
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(hours=24)
-    }
-    
-    # 删除旧token
-    del active_tokens[old_token]
-    
-    return {
-        "new_token": new_token,
-        "token_type": "bearer",
-        "expires_in": 86400
-    }
-
-
-# ========== 状态端点 ==========
-
-@app.get("/api/state/biological")
-async def get_biological_state():
-    """获取若曦生物状态"""
-    return ruoxi_state["biological"]
-
-
-@app.get("/api/state/emotional")
-async def get_emotional_state():
-    """获取若曦情感状态"""
-    return ruoxi_state["emotional"]
-
-
-# ========== 记忆端点 ==========
-
-@app.get("/api/memory/summary")
-async def get_memory_summary():
-    """获取记忆摘要"""
-    emotional_highlights = [
-        "第一次被夸奖时耳尖红了",
-        "深夜独自整理裙摆的安静时刻",
-        "记住对方的习惯并设了特关"
-    ]
-    
-    return {
-        "memory_count": len(chat_history),
-        "emotional_highlights": emotional_highlights[:5],
-        "attachment_moments": 12
-    }
-
-
-@app.get("/api/chat/history")
-async def get_chat_history(limit: int = 10):
-    """获取聊天历史"""
-    return chat_history[-limit:]
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # 从配置获取端口
+    port = config.get("api.port", 8000)
+    host = "0.0.0.0" if not config.get("app.debug") else "127.0.0.1"
+    
+    print("=" * 60)
+    print("🌸 若曦V2 API 服务启动")
+    print("=" * 60)
+    print(f"服务地址: http://{host}:{port}")
+    print(f"文档地址: http://{host}:{port}/docs")
+    print(f"健康检查: http://{host}:{port}/health")
+    print("=" * 60)
+    
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=config.get("app.debug", False),
+        log_level="info"
+    )

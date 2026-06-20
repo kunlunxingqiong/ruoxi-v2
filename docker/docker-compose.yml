@@ -1,0 +1,102 @@
+# 🌸 若曦V2 Docker Compose 配置
+# 一键部署若曦服务
+version: '3.9'
+
+services:
+  # 主API服务
+  ruoxi-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ruoxi-v2-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - RUOXI_ENV=production
+      - RUOXI_LOG_LEVEL=INFO
+      - RUOXI_DB_TYPE=postgresql
+      - RUOXI_DB_URL=postgresql://ruoxi:${DB_PASSWORD}@postgres:5432/ruoxi
+      - RUOXI_DEBUG=false
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ruoxi-data:/app/data
+      - ruoxi-logs:/app/data/logs
+    networks:
+      - ruoxi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: ruoxi-v2-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ruoxi
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ruoxi_password}
+      POSTGRES_DB: ruoxi
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - ruoxi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruoxi -d ruoxi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis缓存 (可选，用于会话存储)
+  redis:
+    image: redis:7-alpine
+    container_name: ruoxi-v2-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - ruoxi-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Nginx反向代理 (可选)
+  nginx:
+    image: nginx:alpine
+    container_name: ruoxi-v2-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - ruoxi-api
+    networks:
+      - ruoxi-network
+
+volumes:
+  ruoxi-data:
+    driver: local
+  ruoxi-logs:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  ruoxi-network:
+    driver: bridge
