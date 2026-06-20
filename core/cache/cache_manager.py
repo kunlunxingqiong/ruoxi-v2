@@ -1,236 +1,121 @@
 """
-🌸 若曦V2 缓存管理器
-多级缓存策略：内存 + Redis + 磁盘
+🌸 若曦V2 - 缓存管理器
+多层缓存策略，提升系统性能
 """
-import hashlib
-import json
-import pickle
-import asyncio
-from typing import Any, Optional, Dict, List, Callable, Union
+from typing import Optional, Any, Dict, List, Callable, Union
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
+import json
+import hashlib
 from functools import wraps
-from pathlib import Path
-import time
+import asyncio
 
-try:
-    import aioredis
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
 
-from core.config_manager import config
-from core.log_manager import get_logger
+class CacheLevel(Enum):
+    """缓存层级"""
+    MEMORY = "memory"      # 进程内存 (最快)
+    REDIS = "redis"        # Redis (分布式)
+    DISK = "disk"          # 本地磁盘 (持久化)
 
-logger = get_logger(__name__)
+
+class CacheStrategy(Enum):
+    """缓存策略"""
+    LRU = "lru"            # 最近最少使用
+    TTL = "ttl"            # 过期时间
+    LFU = "lfu"            # 最不经常使用
 
 
 @dataclass
 class CacheConfig:
     """缓存配置"""
-    ttl: int = 3600  # 默认1小时
-    max_size: int = 1000  # 最大条目数
-    namespace: str = "ruoxi"
+    level: CacheLevel
+    ttl_seconds: int = 300
+    max_size: int = 1000
+    strategy: CacheStrategy = CacheStrategy.TTL
 
 
 class MemoryCache:
-    """
-    内存缓存 (LRU策略)
-    
-    特点:
-    - 本地内存存储
-    - 自动过期
-    - 线程/协程安全
-    """
+    """进程内存缓存"""
     
     def __init__(self, max_size: int = 1000):
         self._cache: Dict[str, Dict] = {}
         self._max_size = max_size
-        self._lock = asyncio.Lock()
-        self._hits = 0
-        self._misses = 0
+        self._access_count: Dict[str, int] = {}
     
     async def get(self, key: str) -> Optional[Any]:
         """获取缓存值"""
-        async with self._lock:
-            item = self._cache.get(key)
-            
-            if item is None:
-                self._misses += 1
-                return None
-            
-            # 检查过期
-            if datetime.utcnow() > item['expires_at']:
+        if key not in self._cache:
+            return None
+        
+        entry = self._cache[key]
+        
+        # 检查过期
+        if entry.get('expires_at'):
+            if datetime.utcnow() > entry['expires_at']:
                 del self._cache[key]
-                self._misses += 1
                 return None
-            
-            self._hits += 1
-            return item['value']
+        
+        # 更新访问计数
+        self._access_count[key] = self._access_count.get(key, 0) + 1
+        
+        return entry['value']
     
     async def set(
         self,
         key: str,
         value: Any,
-        ttl: int = 3600
+        ttl: Optional[int] = None
     ):
         """设置缓存值"""
-        async with self._lock:
-            # 检查容量
-            if len(self._cache) >= self._max_size and key not in self._cache:
-                # LRU淘汰
-                oldest_key = min(
-                    self._cache.keys(),
-                    key=lambda k: self._cache[k]['accessed_at']
-                )
-                del self._cache[oldest_key]
-            
-            now = datetime.utcnow()
-            self._cache[key] = {
-                'value': value,
-                'expires_at': now + timedelta(seconds=ttl),
-                'created_at': now,
-                'accessed_at': now
-            }
+        # 检查容量，LRU淘汰
+        if len(self._cache) >= self._max_size and key not in self._cache:
+            # 找到最少访问的key
+            if self._access_count:
+                lru_key = min(self._access_count, key=self._access_count.get)
+                del self._cache[lru_key]
+                del self._access_count[lru_key]
+        
+        expires_at = None
+        if ttl:
+            expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+        
+        self._cache[key] = {
+            'value': value,
+            'expires_at': expires_at,
+            'created_at': datetime.utcnow()
+        }
+        
+        self._access_count[key] = self._access_count.get(key, 0) + 1
     
-    async def delete(self, key: str):
+    async def delete(self, key: str) -> bool:
         """删除缓存"""
-        async with self._lock:
-            self._cache.pop(key, None)
+        if key in self._cache:
+            del self._cache[key]
+            if key in self._access_count:
+                del self._access_count[key]
+            return True
+        return False
     
     async def clear(self):
         """清空缓存"""
-        async with self._lock:
-            self._cache.clear()
+        self._cache.clear()
+        self._access_count.clear()
     
     def get_stats(self) -> Dict:
-        """获取统计"""
-        total = self._hits + self._misses
-        hit_rate = self._hits / total if total > 0 else 0
+        """获取统计信息"""
+        total = len(self._cache)
+        expired = sum(
+            1 for entry in self._cache.values()
+            if entry.get('expires_at') and datetime.utcnow() > entry['expires_at']
+        )
         
         return {
-            "size": len(self._cache),
-            "max_size": self._max_size,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": round(hit_rate, 2)
-        }
-
-
-class RedisCache:
-    """
-    Redis缓存
-    
-    特点:
-    - 分布式缓存
-    - 持久化
-    - 高性能
-    """
-    
-    def __init__(self):
-        self._client = None
-        self._available = False
-        self._namespace = config.get("cache.redis_namespace", "ruoxi")
-        
-        if REDIS_AVAILABLE:
-            try:
-                self._init_client()
-            except Exception as e:
-                logger.warning(f"⚠️ Redis初始化失败: {e}")
-        else:
-            logger.info("📦 redis未安装，使用内存缓存")
-    
-    def _init_client(self):
-        """初始化Redis客户端"""
-        redis_url = config.get("cache.redis_url", "redis://localhost:6379/0")
-        # 异步初始化在调用时
-        self._available = True
-    
-    def _get_key(self, key: str) -> str:
-        """添加命名空间"""
-        return f"{self._namespace}:{key}"
-    
-    async def _get_client(self):
-        """获取Redis连接"""
-        if not self._available:
-            return None
-        
-        if self._client is None:
-            try:
-                redis_url = config.get("cache.redis_url", "redis://localhost:6379/0")
-                self._client = await aioredis.from_url(redis_url, decode_responses=True)
-            except Exception as e:
-                logger.error(f"🔴 Redis连接失败: {e}")
-                return None
-        
-        return self._client
-    
-    async def get(self, key: str) -> Optional[Any]:
-        """获取缓存"""
-        client = await self._get_client()
-        if not client:
-            return None
-        
-        try:
-            data = await client.get(self._get_key(key))
-            if data:
-                return pickle.loads(data.encode())
-            return None
-        except Exception as e:
-            logger.warning(f"⚠️ Redis get失败: {e}")
-            return None
-    
-    async def set(
-        self,
-        key: str,
-        value: Any,
-        ttl: int = 3600
-    ):
-        """设置缓存"""
-        client = await self._get_client()
-        if not client:
-            return
-        
-        try:
-            serialized = pickle.dumps(value)
-            await client.setex(
-                self._get_key(key),
-                ttl,
-                serialized
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Redis set失败: {e}")
-    
-    async def delete(self, key: str):
-        """删除缓存"""
-        client = await self._get_client()
-        if not client:
-            return
-        
-        try:
-            await client.delete(self._get_key(key))
-        except Exception as e:
-            logger.warning(f"⚠️ Redis delete失败: {e}")
-    
-    async def clear(self):
-        """清空缓存 (慎用)"""
-        client = await self._get_client()
-        if not client:
-            return
-        
-        try:
-            # 只清空命名空间内的键
-            pattern = f"{self._namespace}:*"
-            async for key in client.scan_iter(match=pattern):
-                await client.delete(key)
-        except Exception as e:
-            logger.warning(f"⚠️ Redis clear失败: {e}")
-    
-    def get_stats(self) -> Dict:
-        """获取统计"""
-        return {
-            "available": self._available,
-            "namespace": self._namespace
+            'total_keys': total,
+            'expired_keys': expired,
+            'active_keys': total - expired,
+            'max_size': self._max_size,
+            'hit_rate': 'N/A'  # 需要外部统计
         }
 
 
@@ -238,248 +123,192 @@ class CacheManager:
     """
     缓存管理器
     
-    多级缓存策略:
-    1. L1: 内存缓存 (最快)
-    2. L2: Redis缓存 (分布式)
-    3. L3: 磁盘缓存 (持久化)
-    
-    读取顺序: L1 → L2 → L3 → 数据源
-    写入顺序: 数据源 → L1 + L2 + L3 (异步)
+    功能:
+    - 多层缓存 (Memory -> Redis)
+    - 自动缓存装饰器
+    - 缓存预热
+    - 统计监控
     """
     
     def __init__(self):
-        self.l1_cache = MemoryCache(max_size=1000)  # 内存
-        self.l2_cache = RedisCache()  # Redis
-        
-        # 磁盘缓存目录
-        self._disk_cache_dir = Path(
-            config.get("system.data_dir", "data")
-        ) / "cache"
-        self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
-        
+        self._memory = MemoryCache(max_size=1000)
+        self._redis = None  # 初始化时连接
         self._stats = {
-            "l1_hits": 0,
-            "l2_hits": 0,
-            "disk_hits": 0,
-            "misses": 0
+            'hits': 0,
+            'misses': 0
         }
-        
-        logger.info("✅ 缓存管理器初始化完成 (L1内存 + L2Redis)")
     
-    def _get_disk_path(self, key: str) -> Path:
-        """获取磁盘缓存路径"""
-        safe_key = hashlib.md5(key.encode()).hexdigest()
-        return self._disk_cache_dir / f"{safe_key}.cache"
-    
-    def _get_disk(self, key: str) -> Optional[Any]:
-        """从磁盘获取缓存"""
-        path = self._get_disk_path(key)
-        if path.exists():
+    async def initialize(self, redis_url: Optional[str] = None):
+        """初始化Redis连接"""
+        if redis_url:
             try:
-                with open(path, 'rb') as f:
-                    data = pickle.load(f)
-                    
-                    # 检查过期
-                    if datetime.utcnow() < data['expires_at']:
-                        return data['value']
-                    else:
-                        path.unlink()  # 删除过期文件
-            except Exception:
-                pass
-        return None
+                import aioredis
+                self._redis = await aioredis.from_url(redis_url)
+            except Exception as e:
+                print(f"Redis连接失败: {e}，将使用内存缓存")
     
-    def _set_disk(self, key: str, value: Any, ttl: int):
-        """写入磁盘缓存"""
-        path = self._get_disk_path(key)
-        try:
-            data = {
-                'value': value,
-                'expires_at': datetime.utcnow() + timedelta(seconds=ttl),
-                'created_at': datetime.utcnow()
-            }
-            with open(path, 'wb') as f:
-                pickle.dump(data, f)
-        except Exception:
-            pass
+    def _generate_key(self, prefix: str, *args, **kwargs) -> str:
+        """生成缓存key"""
+        key_data = f"{prefix}:{args}:{kwargs}"
+        return hashlib.md5(key_data.encode()).hexdigest()
     
     async def get(
         self,
         key: str,
-        default: Any = None
-    ) -> Any:
+        level: CacheLevel = CacheLevel.MEMORY
+    ) -> Optional[Any]:
         """
-        获取缓存值
+        获取缓存
         
-        多级缓存读取顺序:
-        1. 内存缓存 (L1)
-        2. Redis缓存 (L2)
-        3. 磁盘缓存 (L3)
+        策略: 先查内存，再查Redis
         """
-        # L1: 内存
-        value = await self.l1_cache.get(key)
+        value = await self._memory.get(key)
+        
         if value is not None:
-            self._stats["l1_hits"] += 1
+            self._stats['hits'] += 1
             return value
         
-        # L2: Redis
-        value = await self.l2_cache.get(key)
-        if value is not None:
-            self._stats["l2_hits"] += 1
-            # 回填L1
-            await self.l1_cache.set(key, value)
-            return value
+        # 查Redis
+        if self._redis and level in [CacheLevel.REDIS, CacheLevel.MEMORY]:
+            try:
+                raw = await self._redis.get(key)
+                if raw:
+                    value = json.loads(raw)
+                    # 回填内存缓存
+                    await self._memory.set(key, value)
+                    self._stats['hits'] += 1
+                    return value
+            except Exception as e:
+                print(f"Redis查询失败: {e}")
         
-        # L3: 磁盘
-        value = self._get_disk(key)
-        if value is not None:
-            self._stats["disk_hits"] += 1
-            # 回填L1和L2
-            await self.l1_cache.set(key, value)
-            await self.l2_cache.set(key, value)
-            return value
-        
-        self._stats["misses"] += 1
-        return default
+        self._stats['misses'] += 1
+        return None
     
     async def set(
         self,
         key: str,
         value: Any,
-        ttl: int = 3600,
-        levels: List[int] = None
+        ttl: int = 300,
+        level: CacheLevel = CacheLevel.MEMORY
     ):
-        """
-        设置缓存值
+        """设置缓存"""
+        # 内存缓存
+        await self._memory.set(key, value, ttl)
         
-        Args:
-            key: 缓存键
-            value: 缓存值
-            ttl: 过期时间(秒)
-            levels: 写入哪些级别 [1, 2, 3] 默认全部
-        """
-        levels = levels or [1, 2, 3]
-        
-        # L1: 内存
-        if 1 in levels:
-            await self.l1_cache.set(key, value, ttl)
-        
-        # L2: Redis (异步)
-        if 2 in levels:
-            asyncio.create_task(self.l2_cache.set(key, value, ttl))
-        
-        # L3: 磁盘 (异步)
-        if 3 in levels:
-            asyncio.create_task(
-                asyncio.to_thread(self._set_disk, key, value, ttl)
-            )
+        # Redis缓存
+        if self._redis and level in [CacheLevel.REDIS, CacheLevel.MEMORY]:
+            try:
+                await self._redis.setex(
+                    key,
+                    ttl,
+                    json.dumps(value, default=str)
+                )
+            except Exception as e:
+                print(f"Redis设置失败: {e}")
     
     async def delete(self, key: str):
-        """删除所有级别的缓存"""
-        await self.l1_cache.delete(key)
-        await self.l2_cache.delete(key)
+        """删除缓存"""
+        await self._memory.delete(key)
         
-        # 磁盘
-        path = self._get_disk_path(key)
-        if path.exists():
-            path.unlink()
+        if self._redis:
+            try:
+                await self._redis.delete(key)
+            except Exception:
+                pass
     
-    async def clear(self):
-        """清空所有缓存"""
-        await self.l1_cache.clear()
-        await self.l2_cache.clear()
+    async def clear(self, level: Optional[CacheLevel] = None):
+        """清空缓存"""
+        if level is None or level == CacheLevel.MEMORY:
+            await self._memory.clear()
+        
+        if self._redis and (level is None or level == CacheLevel.REDIS):
+            try:
+                await self._redis.flushdb()
+            except Exception:
+                pass
+    
+    def cached(
+        self,
+        ttl: int = 300,
+        key_prefix: str = "",
+        level: CacheLevel = CacheLevel.MEMORY
+    ):
+        """
+        缓存装饰器
+        
+        使用示例:
+            @cache_manager.cached(ttl=60, key_prefix="user")
+            async def get_user(user_id: str):
+                return await db.get_user(user_id)
+        """
+        def decorator(func: Callable):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                # 生成缓存key
+                cache_key = self._generate_key(
+                    key_prefix or func.__name__,
+                    *args,
+                    **kwargs
+                )
+                
+                # 尝试获取缓存
+                cached = await self.get(cache_key, level)
+                if cached is not None:
+                    return cached
+                
+                # 执行函数
+                result = await func(*args, **kwargs)
+                
+                # 设置缓存
+                await self.set(cache_key, result, ttl, level)
+                
+                return result
+            
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                # 同步函数不缓存，直接执行
+                return func(*args, **kwargs)
+            
+            if asyncio.iscoroutinefunction(func):
+                return async_wrapper
+            return sync_wrapper
+        
+        return decorator
+    
+    async def warm_up(self, data: Dict[str, Any], ttl: int = 3600):
+        """
+        缓存预热
+        
+        启动时预加载热点数据
+        """
+        for key, value in data.items():
+            await self.set(key, value, ttl)
+        
+        print(f"🌸 缓存预热完成: {len(data)} 条数据")
     
     def get_stats(self) -> Dict:
         """获取缓存统计"""
-        total_hits = sum([
-            self._stats["l1_hits"],
-            self._stats["l2_hits"],
-            self._stats["disk_hits"]
-        ])
-        total = total_hits + self._stats["misses"]
+        total = self._stats['hits'] + self._stats['misses']
+        hit_rate = self._stats['hits'] / total if total > 0 else 0
         
         return {
-            **self._stats,
-            "l1_stats": self.l1_cache.get_stats(),
-            "l2_stats": self.l2_cache.get_stats(),
-            "total_hits": total_hits,
-            "total_requests": total,
-            "hit_rate": round(total_hits / total, 2) if total > 0 else 0
+            'memory': self._memory.get_stats(),
+            'hits': self._stats['hits'],
+            'misses': self._stats['misses'],
+            'hit_rate': f"{hit_rate:.2%}",
+            'redis_connected': self._redis is not None
         }
+    
+    async def health_check(self) -> bool:
+        """缓存健康检查"""
+        try:
+            test_key = "health_check"
+            await self.set(test_key, "ok", 10)
+            value = await self.get(test_key)
+            return value == "ok"
+        except Exception:
+            return False
 
 
-# 全局缓存管理器实例
+# 全局缓存管理器
 cache_manager = CacheManager()
-
-
-def cached(
-    ttl: int = 3600,
-    key_prefix: str = "",
-    key_builder: Callable = None
-):
-    """
-    缓存装饰器
-    
-    使用方式:
-    @cached(ttl=3600, key_prefix="user")
-    async def get_user(user_id: str) -> User:
-        ...
-    """
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # 构建缓存键
-            if key_builder:
-                cache_key = key_builder(*args, **kwargs)
-            else:
-                # 默认键格式: prefix:func_name:args_hash
-                args_str = str(args) + str(sorted(kwargs.items()))
-                args_hash = hashlib.md5(args_str.encode()).hexdigest()[:16]
-                cache_key = f"{key_prefix}:{func.__name__}:{args_hash}"
-            
-            # 尝试获取缓存
-            cached_value = await cache_manager.get(cache_key)
-            if cached_value is not None:
-                return cached_value
-            
-            # 执行函数
-            result = await func(*args, **kwargs)
-            
-            # 写入缓存
-            await cache_manager.set(cache_key, result, ttl)
-            
-            return result
-        
-        return wrapper
-    return decorator
-
-
-def ai_response_cached(ttl: int = 300):
-    """AI响应专用缓存装饰器 (短时间缓存)"""
-    return cached(
-        ttl=ttl,
-        key_prefix="ai",
-        key_builder=lambda *args, **kwargs: f"ai:{hashlib.sha256(str(args).encode()).hexdigest()[:32]}"
-    )
-
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("🌸 若曦V2 缓存管理器")
-    print("=" * 60)
-    
-    print("\n【多级缓存】")
-    print("  L1: 内存缓存 (LRU, 最快)")
-    print("  L2: Redis缓存 (分布式)")
-    print("  L3: 磁盘缓存 (持久化)")
-    
-    print("\n【使用示例】")
-    print("  @cached(ttl=3600)")
-    print("  async def expensive_function(x):")
-    print("      return x * 2")
-    
-    print("\n【统计】")
-    print(f"  {cache_manager.get_stats()}")
-    
-    print("\n" + "=" * 60)
-    print("✅ 缓存管理器就绪")
-    print("=" * 60)
