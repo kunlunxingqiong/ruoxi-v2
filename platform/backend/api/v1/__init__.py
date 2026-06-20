@@ -10,6 +10,7 @@ from .chat_stream import router as chat_stream_router
 from .memory import router as memory_router
 from .health_records import router as health_router
 from .health_analysis import router as health_analysis_router
+from .emotion import router as emotion_router
 
 # 创建v1路由器
 router = APIRouter()
@@ -21,6 +22,7 @@ router.include_router(chat_stream_router, prefix="/chat", tags=["聊天"])
 router.include_router(memory_router, prefix="/memory", tags=["记忆"])
 router.include_router(health_router, prefix="/health", tags=["健康记录"])
 router.include_router(health_analysis_router, prefix="/health-ai", tags=["健康AI分析"])
+router.include_router(emotion_router, prefix="/emotion", tags=["情感分析"])
 
 
 @router.get("/")
