@@ -1,120 +1,236 @@
-# 🤝 贡献指南
+# 🌸 若曦V2 - 贡献指南
 
-感谢你想让若曦变得更好！
+感谢您对若曦V2的兴趣！以下是参与贡献的指南。
 
----
+## 📋 目录
 
-## 🌟 行为准则
+- [行为准则](#行为准则)
+- [如何贡献](#如何贡献)
+- [开发环境搭建](#开发环境搭建)
+- [提交规范](#提交规范)
+- [代码规范](#代码规范)
+- [PR流程](#pr流程)
 
-- 友好、尊重的交流
-- 接受建设性批评
-- 关注对社区最好的方案
-- 互相帮助
+## 🤝 行为准则
 
----
+- 尊重所有参与者
+- 建设性的沟通和反馈
+- 聚焦于技术讨论
+- 帮助新人融入社区
 
-## 📝 提交Issue
+## 🎯 如何贡献
 
-### Bug报告
+### 报告问题
 
-请包含:
-- 问题描述
-- 复现步骤
-- 期望 vs 实际行为
-- 环境信息 (OS/Python版本)
-- 相关日志
+使用 GitHub Issues 报告 bug 或功能请求：
 
-### 功能建议
+1. 检查是否已有相同问题
+2. 使用问题模板创建新Issue
+3. 提供详细描述和复现步骤
+4. 标注相关标签
 
-请包含:
-- 功能描述
-- 使用场景
-- 可能的实现方案
+### 提交代码
 
----
+1. Fork 本仓库
+2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add: AmazingFeature'`)
+4. 推送分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
 
-## 💻 开发流程
+## 🛠️ 开发环境搭建
 
-### 1. Fork & Clone
+### 后端
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ruoxi-v2.git
+# 克隆代码
+git clone https://github.com/kunlunxingqiong/ruoxi-v2.git
 cd ruoxi-v2
-```
 
-### 2. 创建分支
-
-```bash
-git checkout -b feature/my-feature
-# 或
-git checkout -b fix/my-fix
-```
-
-### 3. 开发
-
-```bash
-# 安装开发依赖
+# 安装依赖
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
-npm install --prefix frontend
 
-# 运行测试
-pytest
-npm run test --prefix frontend
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件
 
-# 代码检查
-black .
-flake8
-mypy .
+# 启动服务
+python -m platform.backend.main
 ```
 
-### 4. 提交
+### 前端
 
 ```bash
-git add .
-git commit -m "feat: 添加新功能"
-git push origin feature/my-feature
+cd frontend
+
+# 安装依赖
+npm install
+
+# 开发模式
+npm run dev
 ```
 
-### 5. 创建PR
+### Docker 方式
 
-- 描述清楚做了什么
-- 关联相关Issue
-- 确保测试通过
+```bash
+# 启动完整环境
+docker-compose -f docker/docker-compose.dev.yml up -d
+```
 
----
+## ✏️ 提交规范
 
-## 🎯 代码规范
+提交信息格式：
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+### 类型 (Type)
+
+- `feat`: 新功能
+- `fix`: Bug修复
+- `docs`: 文档更新
+- `style`: 代码格式调整
+- `refactor`: 重构
+- `test`: 测试相关
+- `chore`: 构建/工具相关
+
+### 示例
+
+```bash
+feat(chat): 添加情绪识别功能
+
+- 实现情绪分析API
+- 前端添加情绪选择器
+- 更新系统提示词
+
+Fixes #123
+```
+
+## 📐 代码规范
 
 ### Python
-- PEP 8 + Black格式化
-- 类型注解 (mypy)
-- docstring文档
-- 单元测试
+
+遵循 PEP 8 规范：
+- 使用 4 空格缩进
+- 行长度不超过 100 字符
+- 有意义的命名
+
+```python
+# 函数命名：snake_case
+def calculate_blood_pressure_status(systolic: int, diastolic: int) -> str:
+    """计算血压状态"""
+    if systolic < 120 and diastolic < 80:
+        return "normal"
+    # ...
+```
+
+检查工具：
+```bash
+flake8 .
+black --check .
+isort --check-only .
+```
 
 ### TypeScript/React
-- ESLint + Prettier
-- 函数式组件
-- TypeScript严格模式
 
----
+遵循 ESLint + Prettier：
+- 使用 2 空格缩进
+- 单引号
+- 尾随逗号
 
-## 📁 目录规范
+```typescript
+// 组件命名：PascalCase
+interface ChatMessage {
+  id: string;
+  content: string;
+  role: 'user' | 'assistant';
+}
 
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  userId,
+  apiBaseUrl,
+}) => {
+  // ...
+};
 ```
-feature/my-feature
-fix/my-fix
-docs/improve-readme
-refactor/extract-utils
-```
 
----
+检查工具：
+```bash
+npm run lint
+npm run format:check
+```
 
 ## 🧪 测试要求
 
-- 新功能必须有测试
-- 覆盖率不低于80%
-- 所有测试必须通过
+### 覆盖率标准
+
+- 核心模块：≥85%
+- API端点：≥80%
+- 前端组件：≥70%
+
+### 运行测试
+
+```bash
+# 后端测试
+pytest --cov=. --cov-report=html
+
+# 前端测试
+npm run test -- --coverage
+```
+
+## 📥 PR流程
+
+1. **创建PR** - 填写PR模板，描述改动内容
+2. **自动化检查** - 等待CI通过
+3. **代码审查** - 至少1人review通过
+4. **合并** - 维护者合并到main分支
+
+### PR模板
+
+```markdown
+## 描述
+简要描述本次改动
+
+## 改动类型
+- [ ] 🐛 Bug修复
+- [ ] ✨ 新功能
+- [ ] 📚 文档更新
+- [ ] ♻️ 代码重构
+- [ ] 🧪 测试相关
+
+## 检查清单
+- [ ] 代码通过本地测试
+- [ ] 文档已同步更新
+- [ ] 遵循代码规范
+- [ ] 提交信息规范
+
+## 相关Issue
+Closes #123
+```
+
+## 🏷️ 分支策略
+
+```
+main              # 生产分支
+├── develop       # 开发分支
+├── feature/*     # 功能分支
+├── bugfix/*      # Bug修复分支
+└── hotfix/*      # 紧急修复分支
+```
+
+## 🙋 需要帮助？
+
+- 技术问题：创建 GitHub Discussion
+- Bug报告：创建 GitHub Issue
+- 聊天交流：加入我们的社区群
 
 ---
 
-有问题？开Issue问！
+**谢谢你的贡献！🌸**
+
+每一份贡献都让若曦变得更智能、更温暖。
