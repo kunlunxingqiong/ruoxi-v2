@@ -187,6 +187,39 @@ def get_reminder_scheduler() -> ReminderScheduler:
     return _reminder_scheduler
 
 
+# ==================== WebSocket实时通知回调 ====================
+
+async def websocket_medication_reminder_callback(data: Dict[str, Any]):
+    """
+    WebSocket用药提醒回调
+    
+    通过WebSocket向在线用户实时推送用药提醒
+    """
+    try:
+        # 延迟导入避免循环依赖
+        from core.services.websocket_manager import get_websocket_manager
+        
+        manager = get_websocket_manager()
+        user_id = data.get("user_id")
+        med = data.get("medication", {})
+        
+        if not user_id or not med:
+            return
+        
+        # 检查用户是否在线
+        if manager.get_user_connection_count(user_id) > 0:
+            await manager.send_medication_reminder(
+                user_id=user_id,
+                medication_name=med.get("name", "未知药物"),
+                dosage=med.get("dosage", ""),
+                reminder_time=med.get("reminder_time", ""),
+                medication_id=med.get("id", 0)
+            )
+            logger.info(f"WebSocket用药提醒已发送给用户 {user_id}")
+    except Exception as e:
+        logger.error(f"WebSocket用药提醒发送失败: {e}")
+
+
 # ==================== 示例回调实现 ====================
 
 async def example_push_notification_callback(data: Dict[str, Any]):

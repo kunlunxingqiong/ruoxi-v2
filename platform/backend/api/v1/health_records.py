@@ -2,7 +2,7 @@
 🌸 若曦V2 - 健康记录管理API
 血压、血糖、体重、睡眠、心率等健康数据的CRUD操作
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from datetime import datetime, date
@@ -16,6 +16,10 @@ from models.database import (
 )
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_, func
+
+# WebSocket实时监控集成
+import asyncio
+from platform.backend.api.v1.websocket import monitor_health_record
 
 
 router = APIRouter(prefix="/health", tags=["健康记录"])
@@ -291,6 +295,7 @@ class RecordQueryParams:
 @router.post("/blood-pressure", response_model=BloodPressureResponse)
 async def create_bp_record(
     data: BloodPressureCreate,
+    background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -298,6 +303,7 @@ async def create_bp_record(
     创建血压记录
     
     自动根据ACC/AHA 2017标准分类血压等级
+    实时WebSocket警报监控（危机级血压自动推送紧急通知）
     """
     # 分类血压
     category = classify_bp(data.systolic, data.diastolic)
@@ -316,10 +322,19 @@ async def create_bp_record(
     db.commit()
     db.refresh(record)
     
-    # 如果是高血压危象，添加警告
-    if category == BPCategory.CRISIS:
-        # TODO: 创建紧急通知
-        pass
+    # WebSocket实时健康监控 - 异步触发警报检查
+    if category in [BPCategory.CRISIS, BPCategory.STAGE2]:
+        try:
+            # 使用后台任务发送警报，不阻塞响应
+            asyncio.create_task(monitor_health_record(
+                user_id=current_user.user_id,
+                record_type='blood_pressure',
+                values={'systolic': data.systolic, 'diastolic': data.diastolic, 'pulse': data.pulse}
+            ))
+        except Exception as e:
+            # 警报发送失败不应影响主流程
+            import logging
+            logging.getLogger(__name__).warning(f"WebSocket警报发送失败: {e}")
     
     return record
 
@@ -481,7 +496,11 @@ async def create_glucose_record(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """创建血糖记录"""
+    """
+    创建血糖记录
+    
+    实时WebSocket监控低血糖/高血糖警报
+    """
     is_normal = check_glucose_normal(data.value, data.meal_type)
     
     record = GlucoseRecord(
@@ -498,6 +517,19 @@ async def create_glucose_record(
     db.add(record)
     db.commit()
     db.refresh(record)
+    
+    # WebSocket实时健康监控 - 血糖异常警报
+    if not is_normal or data.value < 3.9 or data.value > 16.7:
+        try:
+            asyncio.create_task(monitor_health_record(
+                user_id=current_user.user_id,
+                record_type='glucose',
+                values={'value': data.value, 'meal_type': data.meal_type, 'unit': data.unit}
+            ))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"WebSocket血糖警报发送失败: {e}")
+    
     return record
 
 
@@ -926,7 +958,11 @@ async def create_hr_record(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """创建心率记录"""
+    """
+    创建心率记录
+    
+    实时WebSocket监控心率异常（心动过缓/过速）
+    """
     record = HeartRateRecord(
         user_id=current_user.user_id,
         bpm=data.bpm,
@@ -938,6 +974,31 @@ async def create_hr_record(
     db.add(record)
     db.commit()
     db.refresh(record)
+    
+    # WebSocket实时监控 - 心率异常警报
+    # 静息心率异常范围: <50 或 >120
+    if data.activity == 'resting' and (data.bpm < 50 or data.bpm > 120):
+        try:
+            asyncio.create_task(monitor_health_record(
+                user_id=current_user.user_id,
+                record_type='heart_rate',
+                values={'bpm': data.bpm, 'activity': data.activity}
+            ))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"WebSocket心率警报发送失败: {e}")
+    # 危急心率: <40 或 >150
+    elif data.bpm < 40 or data.bpm > 150:
+        try:
+            asyncio.create_task(monitor_health_record(
+                user_id=current_user.user_id,
+                record_type='heart_rate',
+                values={'bpm': data.bpm, 'activity': data.activity}
+            ))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"WebSocket心率警报发送失败: {e}")
+    
     return record
 
 
