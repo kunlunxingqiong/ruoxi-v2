@@ -12,6 +12,8 @@ from core.exceptions import ValidationException, AIException
 from core.ai.model_manager import ai_manager
 from core.ai.streaming import StreamingProcessor
 from core.memory.memory_manager import memory_manager
+from core.chat.conversation_manager import conversation_manager
+from core.emotion.emotion_analyzer import emotion_analyzer
 from core.auth import get_current_user, UserAuth
 
 logger = get_logger(__name__)
@@ -104,36 +106,30 @@ async def chat(
     # 生成或获取会话ID
     session_id = request.session_id or str(uuid.uuid4())[:12]
     
-    # 初始化会话
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = {
-            "created_at": datetime.utcnow(),
-            "messages": [],
-            "message_count": 0
-        }
+    # 获取/创建会话
+    session = conversation_manager.get_or_create_session(session_id, user.user_id)
     
-    # 记录用户消息
-    chat_sessions[session_id]["messages"].append({
-        "role": "user",
-        "content": request.message,
-        "timestamp": datetime.utcnow()
-    })
-    chat_sessions[session_id]["message_count"] += 1
+    logger.info(f"💬 聊天请求 | 会话: {session_id} | 用户: {user.user_id} | 长度: {len(request.message)}")
     
-    logger.info(f"💬 聊天请求 | 会话: {session_id} | 消息长度: {len(request.message)}")
+    # 情感分析
+    emotion_state = emotion_analyzer.analyze(request.message, user.user_id)
+    logger.debug(f"💜 情绪检测 | {emotion_state.primary_emotion.value} ({emotion_state.intensity:.1f})")
     
     # 调用AI模型获取回复
     try:
-        # 构建消息列表
-        messages = [
-            {"role": "system", "content": "你是若曦，一个温柔体贴的AI医生朋友。你擅长健康管理、情感陪伴和日常对话。回答要温暖、友善，适当使用emoji。"},
-            {"role": "user", "content": request.message}
-        ]
+        # 使用对话管理器构建优化上下文
+        messages = conversation_manager.build_optimized_context(
+            session=session,
+            current_query=request.message,
+            use_memory=request.use_memory
+        )
         
-        if request.context:
-            # 添加上下文
-            for msg in request.context:
-                messages.append({"role": msg.role, "content": msg.content})
+        # 根据情绪调整系统提示词
+        if emotion_state.primary_emotion.value != "neutral" and emotion_state.intensity > 0.6:
+            # 添加情感引导
+            emotion_guide = f"\n\n用户当前情绪: {emotion_state.primary_emotion.value} (强度{emotion_state.intensity:.1f})。请用对应的方式回应。"
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] += emotion_guide
         
         # 调用AI管理器生成回复
         ai_response = await ai_manager.generate(
@@ -150,6 +146,17 @@ async def chat(
         )
         
         tokens_used = ai_response.tokens_output
+        
+        # 保存对话轮次
+        conversation_manager.save_conversation_turn(
+            session_id=session_id,
+            user_id=user.user_id,
+            user_message=request.message,
+            assistant_response=ai_response.content,
+            emotion_detected=emotion_state.primary_emotion.value,
+            tokens_used=tokens_used,
+            response_time_ms=max(1, int((time.time() - start_time) * 1000))
+        )
         model_used = ai_response.model_used
         
         response_time = int((time.time() - start_time) * 1000)
