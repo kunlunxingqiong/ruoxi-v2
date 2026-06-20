@@ -6,8 +6,10 @@ from fastapi import APIRouter
 
 from .auth import router as auth_router
 from .chat import router as chat_router
+from .chat_stream import router as chat_stream_router
 from .memory import router as memory_router
 from .health_records import router as health_router
+from .health_analysis import router as health_analysis_router
 
 # 创建v1路由器
 router = APIRouter()
@@ -15,8 +17,10 @@ router = APIRouter()
 # 注册所有v1路由
 router.include_router(auth_router, prefix="/auth", tags=["认证"])
 router.include_router(chat_router, prefix="/chat", tags=["聊天"])
+router.include_router(chat_stream_router, prefix="/chat", tags=["聊天"])
 router.include_router(memory_router, prefix="/memory", tags=["记忆"])
 router.include_router(health_router, prefix="/health", tags=["健康记录"])
+router.include_router(health_analysis_router, prefix="/health-ai", tags=["健康AI分析"])
 
 
 @router.get("/")

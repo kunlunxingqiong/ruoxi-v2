@@ -2,11 +2,12 @@
 🌸 若曦V2 流式聊天API
 支持Server-Sent Events流式响应
 """
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
+from datetime import datetime
 
-from core.ai.streaming import StreamingProcessor, StreamChunk
+from core.ai.streaming import StreamingProcessor
 from core.ai.model_manager import ai_manager
 from core.memory.memory_manager import memory_manager
 from core.auth import get_current_user, UserAuth
@@ -73,18 +74,3 @@ async def chat_stream(
     
     # 返回SSE响应
     return processor.create_sse_response(generator)
-
-
-from datetime import datetime
-
-
-async def save_response_to_memory(
-    session_id: str,
-    user_id: str,
-    content: str
-):
-    """保存AI回复到记忆"""
-    memory_manager.add_to_context(session_id, user_id, "assistant", content)
-    # 定期保存到长期记忆
-    if len(memory_manager.get_or_create_context(session_id, user_id).messages) % 5 == 0:
-        memory_manager.save_conversation_to_memory(session_id, user_id)
