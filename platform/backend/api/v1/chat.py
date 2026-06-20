@@ -1,274 +1,236 @@
 """
-🌸 若曦V2 聊天API
-与若曦对话的核心接口
+🌸 若曦V2 - 聊天API
+对话接口端点
 """
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from typing import Optional, List
+from pydantic import BaseModel
 
-from core.log_manager import get_logger
-from core.exceptions import ValidationException, AIException
-from core.ai.model_manager import ai_manager
-from core.ai.streaming import StreamingProcessor
-from core.memory.memory_manager import memory_manager
-from core.chat.conversation_manager import conversation_manager
-from core.emotion.emotion_analyzer import emotion_analyzer
-from core.auth import get_current_user, UserAuth
-
-logger = get_logger(__name__)
-
-router = APIRouter()
+from core.chat.chat_engine import chat_service, ChatMode
+from core.notification.notification_service import notification_service
+from core.websocket.connection_manager import connection_manager
+from platform.backend.core_auth.jwt_auth import get_current_user
 
 
-class ChatMessage(BaseModel):
-    """单条聊天消息"""
-    role: str = Field(..., description="角色: user/assistant/system")
-    content: str = Field(..., description="消息内容", min_length=1)
-    timestamp: Optional[str] = Field(default=None, description="时间戳ISO格式")
+router = APIRouter(prefix="/chat", tags=["聊天"])
 
 
 class ChatRequest(BaseModel):
     """聊天请求"""
-    message: str = Field(..., description="用户消息", min_length=1, max_length=4096)
-    session_id: Optional[str] = Field(default=None, description="会话ID，为空则创建新会话")
-    context: Optional[List[ChatMessage]] = Field(default=[], description="上下文消息")
-    use_memory: bool = Field(default=True, description="是否使用记忆")
-    stream: bool = Field(default=False, description="是否流式返回")
+    message: str
+    mode: str = "casual"
+    stream: bool = False
 
 
 class ChatResponse(BaseModel):
     """聊天响应"""
-    success: bool = Field(..., description="是否成功")
-    session_id: str = Field(..., description="会话ID")
-    message: ChatMessage = Field(..., description="若曦的回复")
-    memory_used: bool = Field(default=False, description="是否使用了记忆")
-    tokens_used: int = Field(default=0, description="Token消耗")
-    model_used: str = Field(default="", description="使用的模型")
-    response_time_ms: int = Field(default=0, description="响应时间毫秒")
+    message_id: str
+    content: str
+    role: str
+    sources: List[dict]
+    context: dict
+    timestamp: str
 
 
-class ChatIfno(BaseModel):
-    """会话信息"""
-    session_id: str
-    created_at: str
-    message_count: int = 0
-    last_message_at: Optional[str] = None
+class ChatHistoryResponse(BaseModel):
+    """历史响应"""
+    success: bool
+    messages: List[dict]
+    total: int
 
 
-# 内存存储（实际应该使用数据库）
-chat_sessions: Dict[str, Dict] = {}
-
-
-@router.post("/", response_model=ChatResponse)
-async def chat(
+@router.post("/message", response_model=ChatResponse)
+async def send_message(
     request: ChatRequest,
-    user: UserAuth = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
-    与若曦聊天
+    发送聊天消息
     
-    发送消息给若曦，获取AI回复
-    
-    **请求示例:**
-    ```json
-    {
-        "message": "你好若曦，我今天头疼",
-        "session_id": "可选的会话ID",
-        "use_memory": true
-    }
-    ```
-    
-    **响应示例:**
-    ```json
-    {
-        "success": true,
-        "session_id": "abc123",
-        "message": {
-            "role": "assistant",
-            "content": "抱抱你，头疼难受呢\n建议先休息一下，如果持续的话建议看医生哦",
-            "timestamp": "2026-06-21T02:56:44"
-        },
-        "tokens_used": 150,
-        "model_used": "gemini-2.0-flash"
-    }
-    ```
+    模式:
+    - `casual` - 闲聊
+    - `health` - 健康咨询
+    - `emotional` - 情绪陪伴
+    - `professional` - 专业医疗
     """
-    import time
-    import uuid
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="消息不能为空")
     
-    start_time = time.time()
+    # 验证模式
+    valid_modes = [m.value for m in ChatMode]
+    if request.mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"无效模式，可选: {valid_modes}")
     
-    # 参数验证
-    if not request.message or len(request.message) > 4096:
-        raise ValidationException("消息长度需在1-4096字符之间")
+    # 调用聊天服务
+    response = await chat_service.send_message(
+        user_id=str(current_user.user_id),
+        message=request.message,
+        mode=request.mode,
+        stream=request.stream
+    )
     
-    # 生成或获取会话ID
-    session_id = request.session_id or str(uuid.uuid4())[:12]
+    # 通过WebSocket推送
+    await connection_manager.send_to_user(
+        str(current_user.user_id),
+        {
+            "type": "chat_message",
+            "message": response
+        }
+    )
     
-    # 获取/创建会话
-    session = conversation_manager.get_or_create_session(session_id, user.user_id)
-    
-    logger.info(f"💬 聊天请求 | 会话: {session_id} | 用户: {user.user_id} | 长度: {len(request.message)}")
-    
-    # 情感分析
-    emotion_state = emotion_analyzer.analyze(request.message, user.user_id)
-    logger.debug(f"💜 情绪检测 | {emotion_state.primary_emotion.value} ({emotion_state.intensity:.1f})")
-    
-    # 调用AI模型获取回复
-    try:
-        # 使用对话管理器构建优化上下文
-        messages = conversation_manager.build_optimized_context(
-            session=session,
-            current_query=request.message,
-            use_memory=request.use_memory
-        )
-        
-        # 根据情绪调整系统提示词
-        if emotion_state.primary_emotion.value != "neutral" and emotion_state.intensity > 0.6:
-            # 添加情感引导
-            emotion_guide = f"\n\n用户当前情绪: {emotion_state.primary_emotion.value} (强度{emotion_state.intensity:.1f})。请用对应的方式回应。"
-            if messages and messages[0].get("role") == "system":
-                messages[0]["content"] += emotion_guide
-        
-        # 调用AI管理器生成回复
-        ai_response = await ai_manager.generate(
-            messages=messages,
-            stream=request.stream,
-            use_cache=True
-        )
-        
-        # 构建回复
-        assistant_message = ChatMessage(
-            role="assistant",
-            content=ai_response.content,
-            timestamp=datetime.utcnow().isoformat()
-        )
-        
-        tokens_used = ai_response.tokens_output
-        
-        # 保存对话轮次
-        conversation_manager.save_conversation_turn(
-            session_id=session_id,
-            user_id=user.user_id,
-            user_message=request.message,
-            assistant_response=ai_response.content,
-            emotion_detected=emotion_state.primary_emotion.value,
-            tokens_used=tokens_used,
-            response_time_ms=max(1, int((time.time() - start_time) * 1000))
-        )
-        model_used = ai_response.model_used
-        
-        response_time = int((time.time() - start_time) * 1000)
-        
-        # 记录回复
-        chat_sessions[session_id]["messages"].append({
-            "role": "assistant",
-            "content": assistant_message.content,
-            "timestamp": datetime.utcnow()
-        })
-        chat_sessions[session_id]["last_message_at"] = datetime.utcnow()
-        
-        logger.info(f"✅ 回复成功 | 会话: {session_id} | 耗时: {response_time}ms")
-        
-        return ChatResponse(
-            success=True,
-            session_id=session_id,
-            message=assistant_message,
-            memory_used=request.use_memory,
-            tokens_used=tokens_used,
-            model_used=model_used,
-            response_time_ms=max(response_time, ai_response.response_time_ms)
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ AI处理失败: {e}")
-        raise AIException(f"模型调用失败: {e}", {"session_id": session_id})
+    return ChatResponse(**response)
 
 
-@router.get("/sessions", response_model=List[ChatIfno])
-async def list_sessions():
-    """
-    获取所有会话列表
+@router.get("/history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    limit: int = Query(50, ge=1, le=100),
+    current_user = Depends(get_current_user)
+):
+    """获取聊天历史"""
+    messages = await chat_service.get_history(
+        user_id=str(current_user.user_id),
+        limit=limit
+    )
     
-    返回当前所有活跃的聊天会话
-    """
-    sessions = []
-    for session_id, session_data in chat_sessions.items():
-        sessions.append(ChatIfno(
-            session_id=session_id,
-            created_at=session_data["created_at"].isoformat() if isinstance(session_data["created_at"], datetime) else str(session_data["created_at"]),
-            message_count=session_data.get("message_count", 0),
-            last_message_at=session_data.get("last_message_at", datetime.utcnow()).isoformat() if isinstance(session_data.get("last_message_at"), datetime) else None
-        ))
-    
-    return sessions
+    return ChatHistoryResponse(
+        success=True,
+        messages=messages,
+        total=len(messages)
+    )
 
 
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    """
-    获取特定会话详情
+@router.delete("/history")
+async def clear_chat_history(
+    current_user = Depends(get_current_user)
+):
+    """清除聊天历史"""
+    success = await chat_service.clear_history(str(current_user.user_id))
     
-    包括会话中的所有消息
-    """
-    if session_id not in chat_sessions:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    if not success:
+        raise HTTPException(status_code=404, detail="没有找到历史记录")
     
-    session = chat_sessions[session_id]
     return {
-        "session_id": session_id,
-        "created_at": session["created_at"].isoformat() if isinstance(session["created_at"], datetime) else session["created_at"],
-        "message_count": session.get("message_count", 0),
-        "messages": [
+        "success": True,
+        "message": "聊天历史已清除"
+    }
+
+
+@router.post("/emotion-check")
+async def emotion_checkin(
+    mood: str,
+    note: Optional[str] = None,
+    current_user = Depends(get_current_user)
+):
+    """
+    情绪打卡
+    
+    mood: 情绪状态 (happy/sad/neutral/anxious/angry)
+    """
+    user_id = str(current_user.user_id)
+    
+    # 存储情绪记录到记忆系统
+    from core.memory.memory_manager import memory_manager
+    await memory_manager.store_interaction(
+        user_id=user_id,
+        content=f"情绪打卡: {mood}" + (f" - {note}" if note else ""),
+        source="emotion_checkin",
+        importance=0.7,
+        metadata={"mood": mood}
+    )
+    
+    # 根据情绪提供响应
+    responses = {
+        "happy": "🌸 看到你开心，曦曦也很高兴呢~",
+        "sad": "🌸 抱抱你...愿意和曦曦说说吗？",
+        "neutral": "🌸 平稳的一天也是好的一天~",
+        "anxious": "🌸 深呼吸，曦曦在这里陪着你",
+        "angry": "🌸 平复一下情绪，曦曦听你讲"
+    }
+    
+    response_text = responses.get(mood, "🌸 曦曦收到了你的情绪记录")
+    
+    # 如果有笔记，AI进一步回复
+    if note:
+        ai_response = await chat_service.send_message(
+            user_id=user_id,
+            message=f"我今天的情绪是{mood}，因为{note}",
+            mode="emotional"
+        )
+        response_text = ai_response["content"]
+    
+    return {
+        "success": True,
+        "mood": mood,
+        "response": response_text,
+        "timestamp": "..."
+    }
+
+
+@router.get("/modes")
+async def get_chat_modes():
+    """获取所有聊天模式"""
+    return {
+        "success": True,
+        "modes": [
             {
-                "role": msg["role"],
-                "content": msg["content"],
-                "timestamp": msg["timestamp"].isoformat() if isinstance(msg["timestamp"], datetime) else msg["timestamp"]
+                "id": "casual",
+                "name": "闲聊模式",
+                "description": "和若曦随便聊聊",
+                "icon": "💬"
+            },
+            {
+                "id": "health",
+                "name": "健康咨询",
+                "description": "健康相关问题",
+                "icon": "🩺"
+            },
+            {
+                "id": "emotional",
+                "name": "情绪陪伴",
+                "description": "情绪支持和倾听",
+                "icon": "🌸"
+            },
+            {
+                "id": "professional",
+                "name": "专业医疗",
+                "description": "专业医疗信息",
+                "icon": "🏥"
             }
-            for msg in session.get("messages", [])
         ]
     }
 
 
-@router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
-    """删除会话"""
-    if session_id not in chat_sessions:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    
-    del chat_sessions[session_id]
-    logger.info(f"🗑️ 会话删除: {session_id}")
-    
-    return {"success": True, "message": "会话已删除"}
-
-
-@router.get("/history/{session_id}")
-async def get_chat_history(session_id: str, limit: int = 50):
-    """
-    获取聊天历史
-    
-    - **session_id**: 会话ID
-    - **limit**: 返回消息数量限制 (默认50)
-    """
-    if session_id not in chat_sessions:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    
-    messages = chat_sessions[session_id].get("messages", [])
-    
-    # 转换并限制数量
-    history = [
-        {
-            "role": msg["role"],
-            "content": msg["content"],
-            "timestamp": msg["timestamp"].isoformat() if isinstance(msg["timestamp"], datetime) else msg["timestamp"]
-        }
-        for msg in messages[-limit:]
+@router.get("/suggestions")
+async def get_chat_suggestions(
+    current_user = Depends(get_current_user)
+):
+    """获取聊天建议（快捷输入）"""
+    # 基于用户历史和健康数据提供建议
+    suggestions = [
+        "今天血压怎么样？",
+        "帮我记录今天的体重",
+        "最近睡眠有点不好",
+        "要提醒我吃药吗？",
+        "分析一下昨天的体检报告",
+        "今天心情不太好..."
     ]
     
     return {
-        "session_id": session_id,
-        "total_messages": len(messages),
-        "returned": len(history),
-        "messages": history
+        "success": True,
+        "suggestions": suggestions[:6]
+    }
+
+
+@router.post("/voice")
+async def voice_chat(
+    audio_data: bytes,
+    current_user = Depends(get_current_user)
+):
+    """语音聊天（TTS/STT）"""
+    # TODO: 集成语音识别和合成
+    return {
+        "success": True,
+        "message": "语音功能开发中",
+        "note": "请使用文字聊天"
     }
