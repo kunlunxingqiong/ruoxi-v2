@@ -1,0 +1,51 @@
+# 若曦V2 配置文件
+
+app:
+  name: "若曦V2"
+  version: "2.0.0"
+  debug: false
+  environment: "production"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  reload: false
+
+# 数据库配置
+database:
+  url: "sqlite:///data/ruoxi.db"
+  echo: false
+  pool_size: 10
+  max_overflow: 20
+
+# Redis缓存
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+
+# 安全设置
+security:
+  secret_key: "change-me-in-production"
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+  enable_audit: true
+
+# 情感渲染
+emotion:
+  default_style: "tender"
+  enable_typography: true
+  enable_mouse_follower: true
+
+# 边缘时刻
+edge_moments:
+  silence_threshold_seconds: 5
+  return_welcome_back: true
+
+# 日志
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/ruoxi.log"

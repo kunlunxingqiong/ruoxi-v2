@@ -1,0 +1,44 @@
+# 若曦V2 - 依赖清单
+# 生产依赖
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 数据库
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+aiosqlite>=0.19.0
+
+# WebSocket和实时通信
+websockets>=12.0
+python-socketio>=5.10.0
+
+# 缓存和消息队列
+redis>=5.0.0
+celery>=5.3.0
+
+# 安全
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+
+# 监控和日志
+prometheus-client>=0.19.0
+structlog>=23.2.0
+
+# 工具库
+python-dotenv>=1.0.0
+httpx>=0.25.0
+aiofiles>=23.2.0
+jinja2>=3.1.0
+pyyaml>=6.0.1
+
+# 开发依赖 (可选)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.1.0
+# black>=23.0.0
+# isort>=5.12.0
+# mypy>=1.7.0
+# ruff>=0.1.0
