@@ -1,60 +1,29 @@
 #!/bin/bash
-# 🌸 若曦V2 定时任务设置脚本
+# 🌸 若曦V2 - 定时任务配置脚本
+# 确保每天5%-10%进度更新 (至少5%)
 
-echo "═══════════════════════════════════════════════════════════════"
-echo "               🌸 若曦V2 定时任务设置"
-echo "═══════════════════════════════════════════════════════════════"
+CRON_FILE=".local/ruoxi-cron"
+REPO_PATH="/home/admin/workspace/ruoxi-v2"
+
+echo "🌸 配置每日自动同步定时任务..."
+
+# 创建cron任务内容
+cat > "$CRON_FILE" << EOF
+# 若曦V2 - 每日自动同步 (5%-10%进度保障)
+# 每天 09:00 执行双仓库同步
+0 9 * * * cd $REPO_PATH && $REPO_PATH/scripts/sync-all-repos.sh >> $REPO_PATH/.local/sync.log 2>&1
+
+# 每天 18:00 执行第二次同步 (确保进度)
+0 18 * * * cd $REPO_PATH && $REPO_PATH/scripts/sync-all-repos.sh >> $REPO_PATH/.local/sync.log 2>&1
+
+# 每周日 00:00 执行深度检查
+0 0 * * 0 cd $REPO_PATH && python $REPO_PATH/scripts/check_env.py >> $REPO_PATH/.local/check.log 2>&1
+EOF
+
+echo "✅ 定时任务配置已生成: $CRON_FILE"
 echo ""
-
-PROJECT_DIR="/home/admin/workspace/ruoxi-v2"
-
-# 创建临时crontab内容
-CRON_CONTENT="# 🌸 若曦V2 每日定时任务 - $(date '+%Y-%m-%d')
-# 每天早上9点: 工作开始前进度检查
-0 9 * * * cd ${PROJECT_DIR} && bash scripts/daily-progress-check.sh >> data/logs/cron.log 2>&1
-
-# 每天中午12点: 午间同步
-0 12 * * * cd ${PROJECT_DIR} && bash scripts/daily-sync.sh >> data/logs/cron.log 2>&1
-
-# 每天晚上6点: 下班前同步
-0 18 * * * cd ${PROJECT_DIR} && bash scripts/daily-sync.sh >> data/logs/cron.log 2>&1
-
-# 每天晚上9点: 晚间检查
-0 21 * * * cd ${PROJECT_DIR} && bash scripts/daily-progress-check.sh >> data/logs/cron.log 2>&1
-"
-
-echo "【即将添加到crontab的任务】"
+echo "安装方式:"
+echo "  crontab $CRON_FILE"
 echo ""
-echo "$CRON_CONTENT"
-echo ""
-
-read -p "确认添加到crontab? [Y/n]: " CONFIRM
-
-if [ "$CONFIRM" != "n" ] && [ "$CONFIRM" != "N" ]; then
-    # 保存现有crontab
-    crontab -l > /tmp/current_crontab.txt 2>/dev/null || echo "# 现有crontab为空" > /tmp/current_crontab.txt
-    
-    # 添加新任务
-    echo "$CRON_CONTENT" >> /tmp/current_crontab.txt
-    
-    # 安装新crontab
-    crontab /tmp/current_crontab.txt
-    
-    echo ""
-    echo "✅ 定时任务已添加！"
-    echo ""
-    echo "当前crontab:"
-    crontab -l | tail -10
-    echo ""
-    echo "💡 查看日志: tail -f ${PROJECT_DIR}/data/logs/cron.log"
-else
-    echo ""
-    echo "已取消，手动添加方式:"
-    echo "  crontab -e"
-    echo ""
-    echo "然后粘贴以下内容:"
-    echo "$CRON_CONTENT"
-fi
-
-echo ""
-echo "═══════════════════════════════════════════════════════════════"
+echo "查看当前任务:"
+echo "  crontab -l"

@@ -1,46 +1,30 @@
 #!/bin/bash
-# 🌸 Gitee令牌配置脚本
+# 🌸 若曦V2 - Gitee令牌本地匿名化配置脚本
+# 将Gitee令牌安全存储在本地
 
-echo "═══════════════════════════════════════════════════════════════"
-echo "               🌸 Gitee令牌配置"
-echo "═══════════════════════════════════════════════════════════════"
-echo ""
+GITEE_TOKEN="${GITEE_TOKEN:-}"
+LOCAL_TOKEN_FILE=".local/gitee-token.txt"
 
-cd /home/admin/workspace/ruoxi-v2
+echo "🌸 配置Gitee访问令牌..."
 
-# 提示输入Gitee令牌
-read -s -p "请输入Gitee私人令牌 (从 https://gitee.com/profile/personal_access_tokens 获取): " GITEE_TOKEN
-echo ""
+# 创建本地存储目录
+mkdir -p .local
 
+# 存储令牌 (如果提供了)
 if [ -n "$GITEE_TOKEN" ]; then
-    # 保存令牌
-    mkdir -p .local
-    echo "$GITEE_TOKEN" > .local/gitee-token.txt
-    chmod 600 .local/gitee-token.txt
-    echo "✅ Gitee令牌已安全存储到 .local/gitee-token.txt"
-    
-    # 配置远程
-    git remote remove gitee 2>/dev/null
-    git remote add gitee "https://xingqiongclaw_admin:${GITEE_TOKEN}@gitee.com/xingqiongclaw_admin/ruoxi-v2.git"
-    echo "✅ Gitee远程已配置使用令牌"
-    
-    echo ""
-    echo "是否立即推送到Gitee?"
-    read -p "[Y/n]: " CONFIRM
-    
-    if [ "$CONFIRM" != "n" ] && [ "$CONFIRM" != "N" ]; then
-        echo ""
-        echo "🌸 推送到Gitee master分支..."
-        git push -f gitee main:master && \
-        echo "" && \
-        echo "🎉 Gitee同步成功!" && \
-        echo "URL: https://gitee.com/xingqiongclaw_admin/ruoxi-v2"
-    else
-        echo "已跳过推送，配置完成"
-    fi
+    echo "$GITEE_TOKEN" > "$LOCAL_TOKEN_FILE"
+    chmod 600 "$LOCAL_TOKEN_FILE"
+    echo "✅ Gitee令牌已本地安全存储"
 else
-    echo "❌ 未提供令牌，配置取消"
+    echo "⚠️  未提供GITEE_TOKEN环境变量"
+    echo "   请设置: export GITEE_TOKEN=your_token"
 fi
 
+# 配置Git使用存储凭证
+git config credential.helper store
+
+echo "✅ Gitee凭证辅助已配置"
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
+echo "使用方式:"
+echo "  export GITEE_TOKEN=your_token"
+echo "  ./scripts/setup-gitee-token.sh"
