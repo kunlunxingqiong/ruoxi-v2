@@ -1,208 +1,257 @@
 # 🚀 若曦V2 部署指南
 
-## 📋 前置要求
+本文档介绍如何将 **若曦V2** 部署到生产环境。
 
-- Python 3.12+
-- Node.js 18+
-- PostgreSQL 14+ (可选，可用SQLite)
-- Redis (可选，可用内存缓存)
+## 📋 目录
+
+- [快速部署 (Docker Compose)](#-快速部署-docker-compose)
+- [手动部署](#-手动部署)
+- [云服务器部署](#-云服务器部署)
+- [监控配置](#-监控配置)
+- [故障排除](#-故障排除)
 
 ---
 
-## 🐳 Docker 部署 (推荐)
+## 🐳 快速部署 (Docker Compose)
 
-### 一键部署
+### 系统要求
+
+- Docker 20.10+
+- Docker Compose 2.0+
+- 2核 CPU / 4GB RAM / 20GB 磁盘
+
+### 部署步骤
 
 ```bash
-# 克隆项目
+# 1. 克隆项目
 git clone https://github.com/kunlunxingqiong/ruoxi-v2.git
 cd ruoxi-v2
 
-# 配置环境
+# 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入配置
 
-# 启动所有服务
+# 编辑 .env 文件，配置以下内容:
+# - DATABASE_URL (PostgreSQL连接字符串)
+# - REDIS_URL (Redis连接字符串)
+# - JWT_SECRET (随机密钥)
+# - GROQ_API_KEY (可选，用于AI功能)
+
+# 3. 启动服务
 docker-compose up -d
 
-# 查看日志
-docker-compose logs -f api
+# 4. 检查状态
+docker-compose ps
+
+# 5. 查看日志
+docker-compose logs -f backend
 ```
 
-### 服务结构
+### 访问服务
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| ruoxi-api | 8000 | FastAPI后端 |
-| ruoxi-frontend | 3000 | React前端 |
-| postgres | 5432 | PostgreSQL数据库 |
-| redis | 6379 | Redis缓存 |
-| nginx | 80/443 | 反向代理 |
+| 服务 | URL | 默认账号 |
+|------|-----|----------|
+| API文档 | http://localhost:8000/docs | - |
+| API | http://localhost:8000 | - |
+| Grafana | http://localhost:3000 | admin/admin |
+| Prometheus | http://localhost:9090 | - |
 
 ---
 
-## 🐍 手动部署
+## 🖥️ 手动部署
 
-### 1. 后端部署
+### 系统要求
+
+- Python 3.11+
+- PostgreSQL 15+
+- Redis 7+
+- Node.js 18+ (前端)
+
+### 后端部署
 
 ```bash
-# 创建虚拟环境
+# 1. 创建虚拟环境
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
+source venv/bin/activate
 
-# 安装依赖
+# 2. 安装依赖
 pip install -r requirements.txt
 
-# 配置环境
-export RUOXI_ENV=production
-export RUOXI_JWT_SECRET="your-secret-key"
-export RUOXI_DB_URL="postgresql://user:pass@localhost/ruoxi"
+# 3. 配置环境
+export DATABASE_URL="postgresql://user:password@localhost/ruoxi_health"
+export REDIS_URL="redis://localhost:6379/0"
+export JWT_SECRET="your-secret-key-here"
 
-# 启动
-cd platform/backend
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+# 4. 数据库迁移
+alembic upgrade head
+
+# 5. 启动服务 (开发模式)
+uvicorn platform.backend.main:app --reload
+
+# 或生产模式
+uvicorn platform.backend.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-### 2. 前端部署
+### Celery 启动
 
 ```bash
-cd frontend
-npm install
-npm run build
+# 启动 Worker
+celery -A tasks.celery_config worker --loglevel=info
 
-# 使用Nginx/serve部署
-serve -s dist -l 3000
+# 启动定时调度
+celery -A tasks.celery_config beat --loglevel=info
 ```
 
 ---
 
-## ☁️ 云部署
+## ☁️ 云服务器部署
 
-### Vercel (前端)
-
-```bash
-# 安装Vercel CLI
-npm i -g vercel
-
-# 部署
-cd frontend
-vercel --prod
-```
-
-### Railway/Render (后端)
-
-1. 连接GitHub仓库
-2. 设置环境变量
-3. 自动部署
-
----
-
-## ⚙️ 环境变量
-
-### 必需配置
+### 使用 Docker 部署到云服务器
 
 ```bash
-# 应用
-RUOXI_ENV=production
-RUOXI_JWT_SECRET=your-secret-key-min-32-chars
+# 1. 在云服务器上安装 Docker
+curl -fsSL https://get.docker.com | sh
 
-# 数据库 (PostgreSQL)
-RUOXI_DB_URL=postgresql://user:password@host:5432/dbname
+# 2. 安装 Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
 
-# AI密钥 (至少一个)
-GEMINI_API_KEY=xxx
-GROQ_API_KEY=xxx
+# 3. 克隆项目
+git clone https://github.com/kunlunxingqiong/ruoxi-v2.git
+cd ruoxi-v2
+
+# 4. 配置生产环境变量
+# 编辑 .env 文件，使用强密码和随机密钥
+
+# 5. 启动
+docker-compose up -d
+
+# 6. 配置防火墙 (如果使用云服务器)
+# 开放端口: 8000 (API), 3000 (Grafana), 5432 (PostgreSQL仅限内网)
 ```
 
-### 可选配置
-
-```bash
-# Redis缓存
-REDIS_URL=redis://localhost:6379/0
-
-# 监控
-PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
-```
-
----
-
-## 🔒 SSL/HTTPS
-
-### Nginx配置
+### Nginx 反向代理配置
 
 ```nginx
 server {
-    listen 443 ssl http2;
-    server_name ruoxi.yourdomain.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
+    listen 80;
+    server_name your-domain.com;
+    
     location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-
-    location /api {
         proxy_pass http://localhost:8000;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+# HTTPS 配置 (推荐使用 certbot)
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+    
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 ```
 
 ---
 
-## 📊 监控
+## 📊 监控配置
 
-Prometheus指标: `http://localhost:8000/metrics`
+### Prometheus 指标
 
-健康检查: `http://localhost:8000/health`
+若曦V2 自动暴露以下 Prometheus 指标:
+
+| 指标 | 类型 | 描述 |
+|------|------|------|
+| `http_requests_total` | Counter | HTTP请求总数 |
+| `http_request_duration_seconds` | Histogram | HTTP请求耗时 |
+| `ruoxi_health_score` | Gauge | 用户健康评分 |
+
+### Grafana 仪表盘
+
+访问 `http://localhost:3000` 查看预配置的仪表盘:
+
+- **系统概览**: CPU、内存、磁盘使用率
+- **API性能**: 请求量、响应时间、错误率
+- **业务指标**: 活跃用户数、健康记录数
 
 ---
 
-## 🐛 故障排查
+## 🔧 故障排除
 
 ### 服务无法启动
 
 ```bash
 # 检查日志
-docker-compose logs api
+docker-compose logs backend
 
-# 检查端口占用
-lsof -i :8000
+# 检查数据库连接
+docker-compose exec backend python -c "from sqlalchemy import create_engine; e = create_engine('postgresql://user:pass@db:5432/ruoxi'); print(e.connect())"
 
-# 检查环境变量
-echo $RUOXI_JWT_SECRET
+# 重新构建
+docker-compose down
+docker-compose up -d --build
 ```
 
-### AI响应慢
-
-- 检查API密钥有效性
-- 检查网络连接
-- 启用缓存
-
-### 数据库错误
+### 数据库迁移失败
 
 ```bash
-# 重置数据库
+# 进入容器
+docker-compose exec backend bash
+
+# 手动运行迁移
+alembic upgrade head
+
+# 或重置迁移
 alembic downgrade base
 alembic upgrade head
 ```
 
+### 性能问题
+
+```bash
+# 检查资源使用
+docker stats
+
+# 查看慢查询 (需要配置PostgreSQL日志)
+docker-compose exec db cat /var/lib/postgresql/data/log/postgresql.log | grep "duration"
+
+# 调整Worker数量 (编辑 docker-compose.yml)
+# 将 backend 的 workers 从 4 调整为 8
+```
+
 ---
 
-## 💡 生产建议
+## 🔄 更新部署
 
-1. **使用PostgreSQL** - 比SQLite性能更好
-2. **启用Redis缓存** - 减少AI调用
-3. **配置反向代理** - Nginx处理静态文件
-4. **设置日志轮转** - 防止磁盘占满
-5. **定期备份** - 数据库定时备份
-6. **监控告警** - 配置Prometheus AlertManager
+```bash
+# 1. 拉取最新代码
+git pull origin main
+
+# 2. 重新构建
+docker-compose down
+docker-compose up -d --build
+
+# 3. 运行迁移
+docker-compose exec backend alembic upgrade head
+```
 
 ---
 
-有问题请参考 [Troubleshooting](./TROUBLESHOOTING.md)
+## 📞 获取帮助
+
+- **GitHub Issues**: https://github.com/kunlunxingqiong/ruoxi-v2/issues
+- **文档**: http://localhost:8000/docs
+- **日志**: `docker-compose logs -f`
+
+---
+
+**Made with 💜 by 若曦**
