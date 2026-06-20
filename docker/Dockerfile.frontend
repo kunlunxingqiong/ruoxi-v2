@@ -1,0 +1,54 @@
+"""
+🌸 若曦V2 - 前端Dockerfile
+Next.js 生产环境
+"""
+FROM node:20-alpine as base
+
+# 安装依赖阶段
+FROM base as deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+# 构建阶段
+FROM base as builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ .
+
+# 构建环境变量
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+# 构建应用
+RUN npm run build
+
+# 运行阶段
+FROM base as runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+# 创建非root用户
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# 复制构建产物
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/api/health || exit 1
+
+CMD ["node", "server.js"]
