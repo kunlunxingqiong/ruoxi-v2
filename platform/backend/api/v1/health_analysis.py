@@ -1,217 +1,161 @@
 """
-🌸 若曦V2 健康分析API
-健康数据智能分析接口
+🌸 若曦V2 - 健康分析API
+基于健康服务层提供的高级分析端点
 """
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
-from datetime import datetime
+from fastapi import APIRouter, Depends, Query
+from typing import Optional
+from datetime import date
 
-from core.health.health_analyzer import health_analyzer, HealthAnalysisResult
-from core.auth import get_current_user, UserAuth
-from core.log_manager import get_logger
-
-logger = get_logger(__name__)
-
-router = APIRouter()
+from platform.backend.core_auth.jwt_auth import get_current_user
+from core.services.health_service import HealthService
+from models.database import get_db
+from sqlalchemy.orm import Session
 
 
-class HealthDataPoint(BaseModel):
-    """健康数据点"""
-    metric_type: str = Field(..., description="指标类型: blood_pressure/blood_glucose/sleep")
-    value: Optional[float] = Field(default=None, description="数值")
-    unit: str = Field(default="", description="单位")
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    systolic: Optional[float] = Field(default=None, description="收缩压")
-    diastolic: Optional[float] = Field(default=None, description="舒张压")
-    notes: Optional[str] = Field(default=None, description="备注")
+router = APIRouter(prefix="/analysis", tags=["健康分析"])
 
 
-class AnalysisRequest(BaseModel):
-    """分析请求"""
-    metric_type: str = Field(..., description="指标类型")
-    records: List[HealthDataPoint] = Field(default=[], description="历史记录")
-
-
-class AnalysisResponse(BaseModel):
-    """分析响应"""
-    metric_type: str
-    current_status: str
-    trend: str
-    risk_level: str
-    suggestions: List[str]
-    abnormal_flags: List[str]
-    summary: str
-
-
-class HealthReportRequest(BaseModel):
-    """健康报告请求"""
-    include_metrics: List[str] = Field(default=["blood_pressure", "blood_glucose", "sleep"])
-    date_range_days: int = Field(default=30, description="数据时间范围")
-
-
-@router.post("/analyze/{metric_type}", response_model=AnalysisResponse)
-async def analyze_metric(
-    metric_type: str,
-    request: AnalysisRequest,
-    user: UserAuth = Depends(get_current_user)
+@router.get("/blood-pressure/statistics")
+async def get_bp_statistics(
+    start_date: Optional[date] = Query(None, description="开始日期"),
+    end_date: Optional[date] = Query(None, description="结束日期"),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
-    分析特定健康指标
+    获取血压统计分析
     
-    **支持的指标:**
-    - `blood_pressure` - 血压
-    - `blood_glucose` - 血糖
-    - `sleep` - 睡眠
-    
-    **示例:**
-    ```json
-    {
-        "records": [
-            {"metric_type": "blood_pressure", "systolic": 120, "diastolic": 80, "timestamp": "2026-06-21T10:00:00"}
-        ]
-    }
-    ```
+    返回平均、最大、最小、标准差等统计指标
     """
-    # 转换为分析器格式
-    from core.health.health_analyzer import HealthMetric
-    
-    metrics = [
-        HealthMetric(
-            metric_type=r.metric_type,
-            value=r.value or 0,
-            unit=r.unit,
-            timestamp=datetime.fromisoformat(r.timestamp),
-            systolic=r.systolic,
-            diastolic=r.diastolic,
-            notes=r.notes
-        )
-        for r in request.records
-    ]
-    
-    # 分析
-    if metric_type == "blood_pressure":
-        result = health_analyzer.analyze_blood_pressure(metrics)
-    elif metric_type == "blood_glucose":
-        result = health_analyzer.analyze_blood_glucose(metrics)
-    elif metric_type == "sleep":
-        result = health_analyzer.analyze_sleep(metrics)
-    else:
-        result = HealthAnalysisResult(
-            metric_type=metric_type,
-            current_status="不支持",
-            trend="未知",
-            risk_level="未知",
-            suggestions=["暂不支持此指标分析"],
-            abnormal_flags=[],
-            summary="该指标类型暂不支持自动分析。"
-        )
-    
-    logger.info(f"💜 健康分析 | 用户: {user.user_id} | 指标: {metric_type}")
-    
-    return AnalysisResponse(
-        metric_type=result.metric_type,
-        current_status=result.current_status,
-        trend=result.trend,
-        risk_level=result.risk_level,
-        suggestions=result.suggestions,
-        abnormal_flags=result.abnormal_flags,
-        summary=result.summary
+    service = HealthService(db)
+    stats = service.get_bp_statistics(
+        user_id=current_user.user_id,
+        start_date=start_date,
+        end_date=end_date
     )
+    return {"success": True, "statistics": stats}
 
 
-@router.post("/report")
-async def generate_health_report(
-    request: HealthReportRequest,
-    user: UserAuth = Depends(get_current_user)
+@router.get("/blood-pressure/morning-surge")
+async def get_morning_surge(
+    days: int = Query(7, ge=3, le=30),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
-    生成综合健康报告
+    检测晨峰血压 (Morning Surge)
     
-    AI驱动的个性化健康报告
+    晨间血压高于其他时段20mmHg以上定义为晨峰
     """
-    # TODO: 从数据库获取用户真实数据
-    # 这里使用模拟数据
-    from core.health.health_analyzer import HealthMetric
-    
-    mock_records = {
-        "blood_pressure": [
-            HealthMetric("blood_pressure", 0, "mmHg", datetime.now(), systolic=118, diastolic=76),
-            HealthMetric("blood_pressure", 0, "mmHg", datetime.now(), systolic=125, diastolic=82),
-            HealthMetric("blood_pressure", 0, "mmHg", datetime.now(), systolic=122, diastolic=78),
-        ]
-    }
-    
-    # 生成报告
-    report = await health_analyzer.generate_health_report(
-        user_id=user.user_id,
-        health_records=mock_records
+    service = HealthService(db)
+    result = service.get_morning_bp_surge(
+        user_id=current_user.user_id,
+        days=days
     )
-    
-    logger.info(f"📊 健康报告生成 | 用户: {user.user_id}")
-    
-    return {
-        "user_id": user.user_id,
-        "generated_at": datetime.utcnow().isoformat(),
-        "report": report,
-        "disclaimer": "此报告由AI生成，仅供参考，不能替代专业医疗建议。"
-    }
+    return {"success": True, "morning_surge": result}
 
 
-@router.post("/ask")
-async def ask_health_question(
-    question: str,
-    user: UserAuth = Depends(get_current_user)
+@router.get("/glucose/trends")
+async def get_glucose_trends(
+    days: int = Query(30, ge=7, le=90),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
-    健康问答
+    获取血糖趋势分析
     
-    向若曦咨询健康问题
-    
-    **注意:** AI回答仅供参考，不能替代专业医疗建议。
-    
-    **示例:**
-    ```json
-    {
-        "question": "血压120/80正常吗？"
-    }
-    ```
+    按时段统计、控制率、趋势方向
     """
-    # 模拟用户健康数据 (实际应从数据库获取)
-    user_health = {
-        "user_id": user.user_id,
-        "recent_metrics": ["blood_pressure"],
-        "known_conditions": []
-    }
-    
-    answer = await health_analyzer.answer_health_question(
-        question=question,
-        user_health_data=user_health
+    service = HealthService(db)
+    trends = service.get_glucose_trends(
+        user_id=current_user.user_id,
+        days=days
     )
-    
-    logger.info(f"💬 健康问答 | 用户: {user.user_id} | 问题: {question[:30]}...")
-    
-    return {
-        "question": question,
-        "answer": answer,
-        "disclaimer": "AI回答仅供参考，如有健康问题请咨询专业医生。",
-        "timestamp": datetime.utcnow().isoformat()
-    }
+    return {"success": True, "trends": trends}
 
 
-@router.get("/stats")
-async def get_health_stats(user: UserAuth = Depends(get_current_user)):
-    """获取用户健康统计概览"""
-    # TODO: 从数据库获取真实统计
+@router.get("/weight/progress")
+async def get_weight_progress(
+    goal_weight: Optional[float] = Query(None, description="目标体重kg"),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取体重进度
     
-    return {
-        "user_id": user.user_id,
-        "metrics_tracked": ["blood_pressure"],  # 用户正在追踪的指标
-        "record_count": {
-            "blood_pressure": 15,
-            "total": 15
-        },
-        "last_recorded": datetime.utcnow().isoformat(),
-        "health_score": 85,  # 综合健康评分 0-100
-        "high_risk_areas": []  # 高风险区域
-    }
+    计算从开始到当前的体重变化，距离目标的差距
+    """
+    service = HealthService(db)
+    progress = service.calculate_weight_progress(
+        user_id=current_user.user_id,
+        goal_weight=goal_weight
+    )
+    return {"success": True, "progress": progress}
+
+
+@router.get("/sleep/quality-score")
+async def get_sleep_quality_score(
+    days: int = Query(7, ge=3, le=30),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    计算睡眠质量评分
+    
+    基于时长、自评、深睡比例、醒来次数综合评分 (0-100)
+    """
+    service = HealthService(db)
+    score = service.get_sleep_quality_score(
+        user_id=current_user.user_id,
+        days=days
+    )
+    return {"success": True, "sleep_analysis": score}
+
+
+@router.get("/heart-rate/hrv")
+async def get_hrv_analysis(
+    days: int = Query(7, ge=5, le=30),
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取心率变异性分析
+    
+    HRV是心脏健康和自主神经功能的重要指标
+    """
+    service = HealthService(db)
+    hrv = service.get_heart_rate_variability(
+        user_id=current_user.user_id,
+        days=days
+    )
+    return {"success": True, "hrv": hrv}
+
+
+@router.get("/overall-score")
+async def get_overall_health_score(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取综合健康评分
+    
+    基于血压、血糖、体重、睡眠、心率计算0-100的综合评分
+    """
+    service = HealthService(db)
+    score = service.get_health_score(user_id=current_user.user_id)
+    return {"success": True, "health_score": score}
+
+
+@router.get("/weekly-report")
+async def get_weekly_report(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    生成周健康报告
+    
+    汇总过去7天的所有健康数据和分析
+    """
+    service = HealthService(db)
+    report = service.generate_weekly_report(user_id=current_user.user_id)
+    return {"success": True, "weekly_report": report}
