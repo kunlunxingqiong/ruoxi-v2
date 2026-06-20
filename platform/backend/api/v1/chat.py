@@ -10,6 +10,9 @@ from datetime import datetime
 from core.log_manager import get_logger
 from core.exceptions import ValidationException, AIException
 from core.ai.model_manager import ai_manager
+from core.ai.streaming import StreamingProcessor
+from core.memory.memory_manager import memory_manager
+from core.auth import get_current_user, UserAuth
 
 logger = get_logger(__name__)
 
@@ -56,7 +59,10 @@ chat_sessions: Dict[str, Dict] = {}
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    user: UserAuth = Depends(get_current_user)
+):
     """
     与若曦聊天
     
