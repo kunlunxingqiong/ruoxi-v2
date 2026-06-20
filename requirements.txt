@@ -9,7 +9,13 @@ pydantic>=2.0.0          # 数据验证
 # Web框架 (二选一)
 fastapi>=0.100.0         # 推荐：FastAPI
 uvicorn[standard]>=0.23.0 # ASGI服务器
+websockets>=11.0         # WebSocket支持
 # flask>=2.3.0           # 备选：Flask
+
+# 认证与安全
+python-jose[cryptography]>=3.3.0  # JWT
+passlib[bcrypt]>=1.7.4   # 密码哈希
+python-multipart>=0.0.6  # 表单解析 (OAuth2)
 
 # AI模型客户端 (按需安装)
 # google-generativeai   # Google Gemini API

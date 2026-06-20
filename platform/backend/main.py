@@ -13,7 +13,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import WebSocket
 from contextlib import asynccontextmanager
+
+# 导入中间件
+from middleware.rate_limit import RateLimitMiddleware
+from websocket.chat_ws import websocket_endpoint
 
 # 导入核心模块
 from core.config_manager import config
@@ -74,6 +79,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 限流中间件 (保护API)
+app.add_middleware(RateLimitMiddleware)
 
 
 # 全局异常处理
@@ -154,6 +162,17 @@ app.include_router(health_router)  # 健康检查 (无版本前缀)
 app.include_router(v1_router, prefix="/api/v1")  # v1 API
 
 
+# WebSocket路由 - 实时通信
+@app.websocket("/ws/chat/{session_id}")
+async def websocket_chat(websocket: WebSocket, session_id: str):
+    """
+    WebSocket实时聊天端点
+    
+    支持流式AI响应和实时通知
+    """
+    await websocket_endpoint(websocket, session_id)
+
+
 # 根路由
 @app.get("/")
 async def root():
@@ -164,7 +183,8 @@ async def root():
         "description": config.get("app.description"),
         "status": "running",
         "docs": "/docs" if config.get("app.debug") else None,
-        "health": "/health"
+        "health": "/health",
+        "websocket": "/ws/chat/{session_id}"
     }
 
 
