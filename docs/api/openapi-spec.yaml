@@ -1,0 +1,219 @@
+openapi: 3.0.0
+info:
+  title: 若曦V2 API
+  description: |
+    🌸 若曦V2 - 你的AI医生朋友
+    
+    带有记忆系统和健康提醒的温柔AI助手
+    
+    ## 功能特性
+    - 💬 智能聊天对话 (支持流式响应)
+    - 💜 健康数据分析与建议
+    - 🧠 长期记忆系统
+    - 💕 情感陪伴与情绪识别
+    - 🔐 JWT认证保护
+    
+    ## 认证方式
+    使用Bearer Token认证:
+    ```
+    Authorization: Bearer {your_token}
+    ```
+  version: 2.0.0
+  contact:
+    name: 若曦团队
+    email: support@ruoxi.ai
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发环境
+  - url: https://api.ruoxi.ai/api/v1
+    description: 生产环境
+
+tags:
+  - name: 认证
+    description: 用户注册、登录、Token管理
+  - name: 聊天
+    description: 与若曦对话
+  - name: 记忆
+    description: 长期记忆管理
+  - name: 健康记录
+    description: 健康数据记录
+  - name: 健康AI分析
+    description: AI驱动的健康分析
+  - name: 情感分析
+    description: 情绪识别与陪伴
+
+paths:
+  /auth/register:
+    post:
+      summary: 用户注册
+      tags:
+        - 认证
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: xiaoming
+                email:
+                  type: string
+                  format: email
+                  example: xiaoming@example.com
+                password:
+                  type: string
+                  minLength: 8
+                  example: secure_password123
+      responses:
+        200:
+          description: 注册成功
+
+  /auth/login:
+    post:
+      summary: 用户登录
+      tags:
+        - 认证
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        200:
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 86400
+
+  /chat:
+    post:
+      summary: 发送聊天消息
+      tags:
+        - 聊天
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: 你好若曦，我今天有点头疼
+                session_id:
+                  type: string
+                  nullable: true
+                use_memory:
+                  type: boolean
+                  default: true
+      responses:
+        200:
+          description: 聊天响应
+
+  /chat/stream:
+    post:
+      summary: 流式聊天 (SSE)
+      tags:
+        - 聊天
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+          description: 流式响应
+
+  /memory/search:
+    get:
+      summary: 搜索记忆
+      tags:
+        - 记忆
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        200:
+          description: 记忆列表
+
+  /emotion/analyze:
+    post:
+      summary: 分析文本情绪
+      tags:
+        - 情感分析
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  example: 最近压力好大，感觉很焦虑
+      responses:
+        200:
+          description: 情绪分析结果
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    HealthMetric:
+      type: object
+      properties:
+        metric_type:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+        timestamp:
+          type: string
+          format: date-time

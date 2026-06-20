@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 # 导入中间件
 from middleware.rate_limit import RateLimitMiddleware
+from middleware.monitoring import MonitoringMiddleware, get_prometheus_metrics
 from websocket.chat_ws import websocket_endpoint
 
 # 导入核心模块
@@ -82,6 +83,9 @@ app.add_middleware(
 
 # 限流中间件 (保护API)
 app.add_middleware(RateLimitMiddleware)
+
+# 监控中间件 (指标收集)
+app.add_middleware(MonitoringMiddleware)
 
 
 # 全局异常处理
@@ -160,6 +164,17 @@ async def log_requests(request: Request, call_next):
 # 注册路由
 app.include_router(health_router)  # 健康检查 (无版本前缀)
 app.include_router(v1_router, prefix="/api/v1")  # v1 API
+
+
+# Prometheus指标端点 (用于监控)
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus监控指标
+    
+    返回格式化的监控数据，供Grafana等工具使用
+    """
+    return get_prometheus_metrics()
 
 
 # WebSocket路由 - 实时通信
