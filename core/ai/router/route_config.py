@@ -1,6 +1,10 @@
 """
 🌸 若曦V2 - 路由配置模块
-定义模型路由策略、任务类型映射和免费额度跟踪配置
+
+定义模型路由策略、任务类型映射、团队成员角色配置和免费额度跟踪
+
+更新日志:
+- 2026-07-13: 添加 AgentRole 枚举、角色模型匹配配置、NVIDIA/硅基流动模型注册表
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,27 +22,42 @@ class TaskType(Enum):
     CREATIVE = "creative"         # 创意写作
 
 
+class AgentRole(Enum):
+    """
+    团队成员角色枚举
+    
+    用于角色匹配路由，每个角色绑定主力模型和备用模型
+    """
+    RUOXI = "ruoxi"       # 🌸 若曦 - 总管+编程 (NVIDIA deepseek-v4-pro / 硅基流动 deepseek-v3)
+    AFU = "afu"           # 🩺 阿芙 - AI医生 (智谱 GLM-4 / NVIDIA qwen)
+    RESEARCHER = "researcher"  # 🔍 小研 - 深度调研 (月之暗面 moonshot-v1-128k / NVIDIA deepseek-v4-pro)
+    CODER = "coder"       # 💻 小码 - 代码任务 (NVIDIA deepseek-coder / 硅基流动 qwen-coder)
+
+
 class ProviderPriority(Enum):
     """Provider优先级（数值越小优先级越高）"""
-    # 免费模型 - 最高优先级
-    OPENROUTER = 1      # 23个免费模型
-    GOOGLE_AI = 2       # Gemini系列
-    GROQ = 3            # 超快免费推理
-    CLOUDFLARE = 4      # Workers AI
+    # 企业级/强力模型 - 最高优先级
+    NVIDIA = 1       # NVIDIA NIM (117+模型，企业级推理)
+    SILICONFLOW = 2  # 硅基流动 (92+模型，深度推理)
     
-    # 付费模型 - 最低优先级（仅fallback）
-    SILICONFLOW = 10    # 硅基流动（备用）
-    ZHIPU = 11          # 智谱（OpenRouter有免费版）
-    MOONSHOT = 12       # 月之暗面
-    DASHSCOPE = 13      # 阿里百炼
-    DEEPSEEK = 14       # DeepSeek
+    # 免费模型
+    OPENROUTER = 10      # 23个免费模型
+    GOOGLE_AI = 11       # Gemini系列
+    GROQ = 12            # 超快免费推理
+    CLOUDFLARE = 13      # Workers AI
+    
+    # 付费备用
+    ZHIPU = 20           # 智谱 GLM
+    MOONSHOT = 21       # 月之暗面
+    DASHSCOPE = 22      # 阿里百炼
+    DEEPSEEK = 23       # DeepSeek 官方
 
 
 @dataclass
 class ModelInfo:
     """模型信息"""
     model_id: str                          # 模型标识符
-    provider: ProviderPriority             # 提供商优先级
+    provider: ProviderPriority              # 提供商优先级
     provider_name: str                     # 提供商名称
     task_types: Set[TaskType]              # 支持的任务类型
     is_free: bool = True                   # 是否免费
@@ -48,8 +67,259 @@ class ModelInfo:
     supports_vision: bool = False          # 支持视觉
     daily_limit: Optional[int] = None       # 每日调用限制
     rate_limit_rpm: int = 60               # 每分钟请求限制
-    description: str = ""                  # 模型描述
+    description: str = ""                   # 模型描述
 
+
+@dataclass
+class RoleModelConfig:
+    """角色模型配置"""
+    role: AgentRole
+    display_name: str                      # 显示名称 (如 "🌸 若曦")
+    primary_provider: ProviderPriority      # 主力提供商
+    primary_model: str                      # 主力模型ID
+    fallback_provider: ProviderPriority      # 备用提供商
+    fallback_model: str                    # 备用模型ID
+    global_fallback_provider: ProviderPriority  # 全局降级提供商
+    global_fallback_model: str             # 全局降级模型
+    description: str = ""                   # 角色描述
+    optimized_for: Set[TaskType] = field(default_factory=TaskType)  # 优化任务类型
+
+
+# ============================================================================
+# 角色模型配置表 - 团队成员与模型匹配
+# ============================================================================
+
+ROLE_MODEL_CONFIGS: Dict[AgentRole, RoleModelConfig] = {
+    AgentRole.RUOXI: RoleModelConfig(
+        role=AgentRole.RUOXI,
+        display_name="🌸 若曦",
+        primary_provider=ProviderPriority.NVIDIA,
+        primary_model="deepseek-ai/deepseek-v4-pro",
+        fallback_provider=ProviderPriority.SILICONFLOW,
+        fallback_model="deepseek-ai/DeepSeek-V3",
+        global_fallback_provider=ProviderPriority.OPENROUTER,
+        global_fallback_model="deepseek/deepseek-v4-flash:free",
+        description="总管+编程，推理强+编程好",
+        optimized_for={TaskType.GENERAL, TaskType.CODING, TaskType.REASONING}
+    ),
+    AgentRole.AFU: RoleModelConfig(
+        role=AgentRole.AFU,
+        display_name="🩺 阿芙",
+        primary_provider=ProviderPriority.ZHIPU,
+        primary_model="glm-4-flash",
+        fallback_provider=ProviderPriority.NVIDIA,
+        fallback_model="qwen/qwen3-72b-instruct",
+        global_fallback_provider=ProviderPriority.GOOGLE_AI,
+        global_fallback_model="gemini-2.0-flash-exp",
+        description="AI医生，中文医疗优秀",
+        optimized_for={TaskType.GENERAL, TaskType.REASONING, TaskType.MEDICAL}
+    ),
+    AgentRole.RESEARCHER: RoleModelConfig(
+        role=AgentRole.RESEARCHER,
+        display_name="🔍 小研",
+        primary_provider=ProviderPriority.MOONSHOT,
+        primary_model="moonshot-v1-128k",
+        fallback_provider=ProviderPriority.NVIDIA,
+        fallback_model="deepseek-ai/deepseek-v4-pro",
+        global_fallback_provider=ProviderPriority.OPENROUTER,
+        global_fallback_model="moonshotai/kimi-k2.6:free",
+        description="深度调研，128K长文本",
+        optimized_for={TaskType.LONG_TEXT, TaskType.GENERAL, TaskType.REASONING}
+    ),
+    AgentRole.CODER: RoleModelConfig(
+        role=AgentRole.CODER,
+        display_name="💻 小码",
+        primary_provider=ProviderPriority.NVIDIA,
+        primary_model="deepseek-ai/deepseek-coder-v2",
+        fallback_provider=ProviderPriority.SILICONFLOW,
+        fallback_model="Qwen/Qwen2.5-Coder-32B-Instruct",
+        global_fallback_provider=ProviderPriority.OPENROUTER,
+        global_fallback_model="qwen/qwen3-coder:free",
+        description="代码任务，代码专用模型",
+        optimized_for={TaskType.CODING, TaskType.GENERAL}
+    ),
+}
+
+
+# ============================================================================
+# NVIDIA NIM 模型注册表 (117+模型)
+# ============================================================================
+
+NVIDIA_MODELS: Dict[str, ModelInfo] = {
+    # 深度推理系列
+    "deepseek-ai/deepseek-v4-pro": ModelInfo(
+        model_id="deepseek-ai/deepseek-v4-pro",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=8192,
+        context_window=64000,
+        rate_limit_rpm=40,  # NVIDIA限制约40 req/min per key
+        description="DeepSeek V4 Pro - 企业级深度推理"
+    ),
+    "deepseek-ai/deepseek-r1": ModelInfo(
+        model_id="deepseek-ai/deepseek-r1",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.REASONING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=8192,
+        context_window=64000,
+        rate_limit_rpm=40,
+        description="DeepSeek R1 - 深度推理模型"
+    ),
+    "deepseek-ai/deepseek-coder-v2": ModelInfo(
+        model_id="deepseek-ai/deepseek-coder-v2",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.CODING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=8192,
+        context_window=56000,
+        rate_limit_rpm=40,
+        description="DeepSeek Coder V2 - 专业代码模型"
+    ),
+    # Qwen系列
+    "qwen/qwen3-next-80b-a3b-instruct": ModelInfo(
+        model_id="qwen/qwen3-next-80b-a3b-instruct",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=32000,
+        rate_limit_rpm=40,
+        description="Qwen3 80B A3B - 阿里通义千问"
+    ),
+    "qwen/qwen3-72b-instruct": ModelInfo(
+        model_id="qwen/qwen3-72b-instruct",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=32000,
+        rate_limit_rpm=40,
+        description="Qwen3 72B - 通义千问"
+    ),
+    "qwen/qwen3-coder": ModelInfo(
+        model_id="qwen/qwen3-coder",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.CODING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=4096,
+        context_window=32000,
+        rate_limit_rpm=40,
+        description="Qwen3 Coder - 编程专用"
+    ),
+    # NVIDIA 自有模型
+    "nvidia/llama-3.3-nv-70b-instruct": ModelInfo(
+        model_id="nvidia/llama-3.3-nv-70b-instruct",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.GENERAL, TaskType.REASONING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=128000,
+        rate_limit_rpm=40,
+        description="Llama 3.3 70B NV - NVIDIA优化版"
+    ),
+    "nvidia/nemotron-4-340b-instruct": ModelInfo(
+        model_id="nvidia/nemotron-4-340b-instruct",
+        provider=ProviderPriority.NVIDIA,
+        provider_name="NVIDIA NIM",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=4096,
+        rate_limit_rpm=40,
+        description="Nemotron 4 340B - NVIDIA大模型"
+    ),
+}
+
+
+# ============================================================================
+# 硅基流动模型注册表 (92+模型)
+# ============================================================================
+
+SILICONFLOW_MODELS: Dict[str, ModelInfo] = {
+    # DeepSeek系列
+    "deepseek-ai/DeepSeek-V3": ModelInfo(
+        model_id="deepseek-ai/DeepSeek-V3",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=64000,
+        rate_limit_rpm=120,
+        description="DeepSeek V3 - 深度推理"
+    ),
+    "deepseek-ai/DeepSeek-R1": ModelInfo(
+        model_id="deepseek-ai/DeepSeek-R1",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.REASONING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=4096,
+        context_window=64000,
+        rate_limit_rpm=120,
+        description="DeepSeek R1 - 推理模型"
+    ),
+    # Qwen Coder系列
+    "Qwen/Qwen2.5-Coder-32B-Instruct": ModelInfo(
+        model_id="Qwen/Qwen2.5-Coder-32B-Instruct",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.CODING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=4096,
+        context_window=32000,
+        rate_limit_rpm=120,
+        description="Qwen2.5 Coder 32B - 编程专用"
+    ),
+    "Qwen/Qwen2.5-Coder-7B-Instruct": ModelInfo(
+        model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.CODING, TaskType.GENERAL},
+        is_free=False,
+        max_tokens=2048,
+        context_window=16000,
+        rate_limit_rpm=120,
+        description="Qwen2.5 Coder 7B - 轻量编程"
+    ),
+    # GLM系列
+    "ZhipuAI/glm-4-flash": ModelInfo(
+        model_id="ZhipuAI/glm-4-flash",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.GENERAL, TaskType.REASONING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=128000,
+        rate_limit_rpm=120,
+        description="GLM-4 Flash - 智谱快速版"
+    ),
+    "ZhipuAI/glm-4": ModelInfo(
+        model_id="ZhipuAI/glm-4",
+        provider=ProviderPriority.SILICONFLOW,
+        provider_name="硅基流动",
+        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.CODING},
+        is_free=False,
+        max_tokens=4096,
+        context_window=128000,
+        rate_limit_rpm=120,
+        description="GLM-4 - 智谱完整版"
+    ),
+}
+
+
+# ============================================================================
+# 兼容旧版本的模型注册表
+# ============================================================================
 
 # OpenRouter 免费模型列表
 OPENROUTER_FREE_MODELS: Dict[str, ModelInfo] = {
@@ -86,6 +356,17 @@ OPENROUTER_FREE_MODELS: Dict[str, ModelInfo] = {
         daily_limit=50,
         description="Qwen3 80B 免费版"
     ),
+    "qwen/qwen3-coder:free": ModelInfo(
+        model_id="qwen/qwen3-coder:free",
+        provider=ProviderPriority.OPENROUTER,
+        provider_name="OpenRouter",
+        task_types={TaskType.CODING, TaskType.GENERAL},
+        is_free=True,
+        max_tokens=4096,
+        context_window=32000,
+        daily_limit=100,
+        description="Qwen3 Coder 免费版"
+    ),
     "meta-llama/llama-3.3-70b-instruct:free": ModelInfo(
         model_id="meta-llama/llama-3.3-70b-instruct:free",
         provider=ProviderPriority.OPENROUTER,
@@ -108,61 +389,6 @@ OPENROUTER_FREE_MODELS: Dict[str, ModelInfo] = {
         daily_limit=50,
         description="NVIDIA Nemotron 120B 免费版"
     ),
-    "google/gemma-4-31b-it:free": ModelInfo(
-        model_id="google/gemma-4-31b-it:free",
-        provider=ProviderPriority.OPENROUTER,
-        provider_name="OpenRouter",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=4096,
-        context_window=32000,
-        daily_limit=100,
-        description="Gemma 4 31B 免费版"
-    ),
-    "z-ai/glm-4.5-air:free": ModelInfo(
-        model_id="z-ai/glm-4.5-air:free",
-        provider=ProviderPriority.OPENROUTER,
-        provider_name="OpenRouter",
-        task_types={TaskType.GENERAL, TaskType.CODING},
-        is_free=True,
-        max_tokens=4096,
-        context_window=128000,
-        daily_limit=100,
-        description="GLM-4.5 Air 免费版"
-    ),
-    "openai/gpt-oss-120b:free": ModelInfo(
-        model_id="openai/gpt-oss-120b:free",
-        provider=ProviderPriority.OPENROUTER,
-        provider_name="OpenRouter",
-        task_types={TaskType.GENERAL, TaskType.REASONING},
-        is_free=True,
-        max_tokens=4096,
-        context_window=32000,
-        daily_limit=50,
-        description="GPT-OSS 120B 免费版"
-    ),
-    "qwen/qwen3-coder:free": ModelInfo(
-        model_id="qwen/qwen3-coder:free",
-        provider=ProviderPriority.OPENROUTER,
-        provider_name="OpenRouter",
-        task_types={TaskType.CODING, TaskType.GENERAL},
-        is_free=True,
-        max_tokens=4096,
-        context_window=32000,
-        daily_limit=100,
-        description="Qwen3 Coder 免费版"
-    ),
-    "minimax/minimax-m2.5:free": ModelInfo(
-        model_id="minimax/minimax-m2.5:free",
-        provider=ProviderPriority.OPENROUTER,
-        provider_name="OpenRouter",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=4096,
-        context_window=100000,
-        daily_limit=100,
-        description="MiniMax M2.5 免费版"
-    ),
 }
 
 # Google AI Studio 模型
@@ -176,7 +402,7 @@ GOOGLE_AI_MODELS: Dict[str, ModelInfo] = {
         max_tokens=8192,
         context_window=1000000,
         supports_vision=True,
-        daily_limit=1500,  # 每天150万token
+        daily_limit=1500,
         rate_limit_rpm=1000,
         description="Gemini 2.0 Flash 实验版"
     ),
@@ -193,256 +419,115 @@ GOOGLE_AI_MODELS: Dict[str, ModelInfo] = {
         rate_limit_rpm=1000,
         description="Gemini 1.5 Flash 8B"
     ),
-    "gemini-1.5-flash": ModelInfo(
-        model_id="gemini-1.5-flash",
-        provider=ProviderPriority.GOOGLE_AI,
-        provider_name="Google AI Studio",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE, TaskType.CODING, TaskType.VISION},
-        is_free=True,
-        max_tokens=8192,
-        context_window=1000000,
-        supports_vision=True,
-        daily_limit=1500,
-        rate_limit_rpm=1000,
-        description="Gemini 1.5 Flash"
-    ),
-    "gemini-1.5-pro": ModelInfo(
-        model_id="gemini-1.5-pro",
-        provider=ProviderPriority.GOOGLE_AI,
-        provider_name="Google AI Studio",
-        task_types={TaskType.GENERAL, TaskType.REASONING, TaskType.LONG_TEXT, TaskType.VISION},
-        is_free=True,
-        max_tokens=8192,
-        context_window=2000000,
-        supports_vision=True,
-        daily_limit=500,
-        rate_limit_rpm=100,
-        description="Gemini 1.5 Pro"
-    ),
-    "gemma-3-27b-it": ModelInfo(
-        model_id="gemma-3-27b-it",
-        provider=ProviderPriority.GOOGLE_AI,
-        provider_name="Google AI Studio",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=8192,
-        context_window=32000,
-        daily_limit=1500,
-        description="Gemma 3 27B"
-    ),
 }
 
 # Groq 模型
 GROQ_MODELS: Dict[str, ModelInfo] = {
-    "llama-3.3-70b-versatile": ModelInfo(
-        model_id="llama-3.3-70b-versatile",
+    "llama-3.3-70b-specdec": ModelInfo(
+        model_id="llama-3.3-70b-specdec",
         provider=ProviderPriority.GROQ,
         provider_name="Groq",
-        task_types={TaskType.GENERAL, TaskType.CODING, TaskType.FAST_RESPONSE},
+        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE, TaskType.CODING},
         is_free=True,
         max_tokens=8192,
-        context_window=128000,
+        context_window=8192,
         rate_limit_rpm=30,
-        description="Llama 3.3 70B 超快版"
-    ),
-    "llama-3.1-8b-instant": ModelInfo(
-        model_id="llama-3.1-8b-instant",
-        provider=ProviderPriority.GROQ,
-        provider_name="Groq",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=8192,
-        context_window=128000,
-        rate_limit_rpm=30,
-        description="Llama 3.1 8B 极速版"
+        description="Groq Llama 3.3 70B 极速版"
     ),
     "mixtral-8x7b-32768": ModelInfo(
         model_id="mixtral-8x7b-32768",
         provider=ProviderPriority.GROQ,
         provider_name="Groq",
-        task_types={TaskType.GENERAL, TaskType.CODING},
+        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
         is_free=True,
         max_tokens=32768,
-        context_window=32000,
+        context_window=32768,
         rate_limit_rpm=30,
-        description="Mixtral 8x7B"
-    ),
-    "gemma2-9b-it": ModelInfo(
-        model_id="gemma2-9b-it",
-        provider=ProviderPriority.GROQ,
-        provider_name="Groq",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=8192,
-        context_window=8000,
-        rate_limit_rpm=30,
-        description="Gemma 2 9B"
+        description="Groq Mixtral 8x7B"
     ),
 }
 
-# Cloudflare Workers AI 模型
-CLOUDFLARE_MODELS: Dict[str, ModelInfo] = {
-    "@cf/meta/llama-3.1-8b-instruct": ModelInfo(
-        model_id="@cf/meta/llama-3.1-8b-instruct",
-        provider=ProviderPriority.CLOUDFLARE,
-        provider_name="Cloudflare Workers AI",
-        task_types={TaskType.GENERAL, TaskType.FAST_RESPONSE},
-        is_free=True,
-        max_tokens=4096,
-        context_window=128000,
-        daily_limit=10000,
-        rate_limit_rpm=60,
-        description="Llama 3.1 8B Cloudflare版"
-    ),
-    "@cf/mistral/mistral-7b-instruct-v0.1": ModelInfo(
-        model_id="@cf/mistral/mistral-7b-instruct-v0.1",
-        provider=ProviderPriority.CLOUDFLARE,
-        provider_name="Cloudflare Workers AI",
-        task_types={TaskType.GENERAL},
-        is_free=True,
-        max_tokens=4096,
-        context_window=32000,
-        daily_limit=10000,
-        rate_limit_rpm=60,
-        description="Mistral 7B Cloudflare版"
-    ),
-    "@cf/deepseek-ai/deepseek-coder-33b-instruct": ModelInfo(
-        model_id="@cf/deepseek-ai/deepseek-coder-33b-instruct",
-        provider=ProviderPriority.CLOUDFLARE,
-        provider_name="Cloudflare Workers AI",
-        task_types={TaskType.CODING},
-        is_free=True,
-        max_tokens=4096,
-        context_window=32000,
-        daily_limit=10000,
-        rate_limit_rpm=60,
-        description="DeepSeek Coder 33B"
-    ),
-}
 
-# 任务类型到模型的默认映射
-TASK_MODEL_MAPPING: Dict[TaskType, List[str]] = {
-    TaskType.GENERAL: [
-        "deepseek/deepseek-v4-flash:free",
-        "gemini-1.5-flash",
-        "llama-3.3-70b-versatile",
-        "@cf/meta/llama-3.1-8b-instruct",
-    ],
-    TaskType.CODING: [
-        "qwen/qwen3-coder:free",
-        "deepseek/deepseek-v4-flash:free",
-        "llama-3.3-70b-versatile",
-        "@cf/deepseek-ai/deepseek-coder-33b-instruct",
-    ],
-    TaskType.REASONING: [
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
-        "gemini-1.5-pro",
-    ],
-    TaskType.LONG_TEXT: [
-        "moonshotai/kimi-k2.6:free",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    ],
-    TaskType.FAST_RESPONSE: [
-        "gemini-2.0-flash-exp",
-        "gemma-3-27b-it",
-        "gemma2-9b-it",
-        "minimax/minimax-m2.5:free",
-    ],
-    TaskType.VISION: [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    ],
-    TaskType.CREATIVE: [
-        "deepseek/deepseek-v4-flash:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "gemini-1.5-flash",
-    ],
-}
+# ============================================================================
+# 合并所有模型注册表
+# ============================================================================
 
-
-@dataclass
-class RouteConfig:
-    """路由配置"""
-    # 优先级策略
-    enable_free_first: bool = True          # 优先使用免费模型
-    enable_provider_fallback: bool = True    # Provider降级
-    enable_model_fallback: bool = True       # 同Provider内模型降级
-    
-    # 负载均衡策略
-    load_balance_strategy: str = "round_robin"  # round_robin, random, weighted
-    
-    # 健康检查
-    health_check_interval: int = 300       # 健康检查间隔(秒)
-    health_check_timeout: int = 10         # 健康检查超时(秒)
-    unhealthy_threshold: int = 3           # 连续失败次数阈值
-    
-    # 速率限制
-    enable_rate_limit: bool = True         # 启用速率限制跟踪
-    daily_limit_warning: float = 0.8        # 发出警告的阈值比例
-    
-    # 超时配置
-    request_timeout: int = 120             # 请求超时(秒)
-    stream_timeout: int = 300              # 流式请求超时(秒)
-    
-    # 重试配置
-    max_retries: int = 3                   # 最大重试次数
-    retry_delay: float = 1.0                # 重试延迟(秒)
-
-
-# 默认路由配置
-DEFAULT_ROUTE_CONFIG = RouteConfig()
-
-
-# 所有可用模型注册表
 ALL_MODELS: Dict[str, ModelInfo] = {}
+ALL_MODELS.update(NVIDIA_MODELS)
+ALL_MODELS.update(SILICONFLOW_MODELS)
 ALL_MODELS.update(OPENROUTER_FREE_MODELS)
 ALL_MODELS.update(GOOGLE_AI_MODELS)
 ALL_MODELS.update(GROQ_MODELS)
-ALL_MODELS.update(CLOUDFLARE_MODELS)
 
 
-def get_models_for_task(
-    task_type: TaskType,
-    config: Optional[RouteConfig] = None
-) -> List[ModelInfo]:
+# ============================================================================
+# 辅助函数
+# ============================================================================
+
+def get_models_for_task(task_type: TaskType) -> List[str]:
     """
-    获取适合指定任务类型的模型列表
+    获取支持特定任务类型的模型列表
     
     Args:
         task_type: 任务类型
-        config: 路由配置
         
     Returns:
-        按优先级排序的模型列表
+        模型ID列表，按优先级排序
     """
-    if config is None:
-        config = DEFAULT_ROUTE_CONFIG
-    
-    # 获取任务对应的模型ID列表
-    model_ids = TASK_MODEL_MAPPING.get(task_type, TASK_MODEL_MAPPING[TaskType.GENERAL])
-    
-    # 过滤并排序
     models = []
-    for model_id in model_ids:
-        if model_id in ALL_MODELS:
-            model_info = ALL_MODELS[model_id]
-            if config.enable_free_first and not model_info.is_free:
-                continue
-            models.append(model_info)
-    
-    # 按优先级排序
-    models.sort(key=lambda m: m.provider.value)
-    
+    for model_id, info in ALL_MODELS.items():
+        if task_type in info.task_types:
+            models.append(model_id)
     return models
 
 
-def get_all_free_models() -> List[ModelInfo]:
+def get_all_free_models() -> List[str]:
     """获取所有免费模型"""
-    return [m for m in ALL_MODELS.values() if m.is_free]
+    return [m for m, info in ALL_MODELS.items() if info.is_free]
 
 
-def get_provider_models(provider: ProviderPriority) -> List[ModelInfo]:
-    """获取指定Provider的所有模型"""
-    return [m for m in ALL_MODELS.values() if m.provider == provider]
+def get_provider_models(provider: ProviderPriority) -> List[str]:
+    """
+    获取指定Provider的所有模型
+    
+    Args:
+        provider: Provider优先级枚举
+        
+    Returns:
+        模型ID列表
+    """
+    return [m for m, info in ALL_MODELS.items() if info.provider == provider]
+
+
+def get_role_config(role: AgentRole) -> RoleModelConfig:
+    """
+    获取角色模型配置
+    
+    Args:
+        role: 角色枚举
+        
+    Returns:
+        角色模型配置
+    """
+    return ROLE_MODEL_CONFIGS.get(role)
+
+
+def get_default_role_chain(role: AgentRole) -> List[tuple]:
+    """
+    获取角色的完整降级链
+    
+    Args:
+        role: 角色枚举
+        
+    Returns:
+        [(provider, model_id), ...] 降级链
+    """
+    config = ROLE_MODEL_CONFIGS.get(role)
+    if not config:
+        return []
+    
+    return [
+        (config.primary_provider, config.primary_model),
+        (config.fallback_provider, config.fallback_model),
+        (config.global_fallback_provider, config.global_fallback_model),
+    ]
