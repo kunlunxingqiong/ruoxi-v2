@@ -1,283 +1,236 @@
 """
-🌸 若曦V2 - 多模型路由器
-智能路由、负载均衡、故障转移、成本优化
+🌸 若曦V2 - 模型路由器 (角色匹配模式)
+
+核心功能:
+- 角色匹配路由: 根据团队成员角色自动选择对应模型
+- 多级降级链: 主力模型 → 备用模型 → 全局fallback
+- 支持角色: RUOXI(若曦), AFU(阿芙), RESEARCHER(小研), CODER(小码)
+- 保留通用路由能力 (不指定角色时按任务类型路由)
+
+更新日志:
+- 2026-07-13: 角色匹配模式，NVIDIA NIM和硅基流动支持
 """
 import asyncio
 import os
-import time
-import random
-from typing import AsyncGenerator, Dict, List, Optional, Set, Callable
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, AsyncGenerator
 
 from core.ai.models.base_model import BaseModel, Message, ModelResponse, ModelProvider
 from core.ai.router.route_config import (
-    RouteConfig,
-    DEFAULT_ROUTE_CONFIG,
-    TaskType,
-    ProviderPriority,
+    AgentRole,
     ModelInfo,
+    ProviderPriority,
+    RouteConfig,
+    TaskType,
+    ROLE_MODEL_CONFIGS,
+    get_role_config,
+    get_default_role_chain,
     ALL_MODELS,
-    get_models_for_task,
-    OPENROUTER_FREE_MODELS,
-    GOOGLE_AI_MODELS,
-    GROQ_MODELS,
-    CLOUDFLARE_MODELS,
 )
-from core.ai.router.openrouter_client import OpenRouterClient
-from core.ai.router.google_ai_client import GoogleAIClient
-from core.ai.router.groq_client import GroqClient
+
+
+@dataclass
+class RouteRequest:
+    """路由请求"""
+    messages: List[Message]
+    agent_role: Optional[AgentRole] = None  # 角色（优先）
+    task_type: Optional[TaskType] = None     # 任务类型（无角色时使用）
+    temperature: float = 0.7
+    max_tokens: int = 1024
+    stream: bool = False
+    model_id: Optional[str] = None  # 强制指定模型
+
+
+@dataclass
+class RouteResult:
+    """路由结果"""
+    provider: ModelProvider
+    model_id: str
+    latency_ms: Optional[int] = None
 
 
 class HealthStatus:
-    """Provider健康状态"""
+    """健康状态追踪"""
     
-    def __init__(self) -> None:
-        self._status: Dict[ProviderPriority, bool] = {}
-        self._consecutive_failures: Dict[ProviderPriority, int] = {}
-        self._last_check: Dict[ProviderPriority, float] = {}
+    def __init__(self):
+        # provider -> 连续失败次数
+        self._failures: Dict[ModelProvider, int] = {}
+        # provider -> 是否健康
+        self._healthy: Dict[ModelProvider, bool] = {}
     
-    def set_healthy(self, provider: ProviderPriority, healthy: bool) -> None:
-        """设置健康状态"""
-        self._status[provider] = healthy
-        if healthy:
-            self._consecutive_failures[provider] = 0
-        else:
-            self._consecutive_failures[provider] = \
-                self._consecutive_failures.get(provider, 0) + 1
-        self._last_check[provider] = time.time()
+    def record_success(self, provider: ModelProvider) -> None:
+        """记录成功"""
+        self._failures[provider] = 0
+        self._healthy[provider] = True
     
-    def is_healthy(self, provider: ProviderPriority) -> bool:
+    def record_failure(self, provider: ModelProvider) -> None:
+        """记录失败"""
+        current = self._failures.get(provider, 0)
+        self._failures[provider] = current + 1
+        # 连续失败3次标记为不健康
+        if current + 1 >= 3:
+            self._healthy[provider] = False
+    
+    def is_healthy(self, provider: ModelProvider, threshold: int = 3) -> bool:
         """检查是否健康"""
-        return self._status.get(provider, True)
+        if provider not in self._failures:
+            return True
+        return self._failures[provider] < threshold
     
-    def should_skip(self, provider: ProviderPriority, threshold: int = 3) -> bool:
-        """是否应该跳过（连续失败过多）"""
-        return self._consecutive_failures.get(provider, 0) >= threshold
-    
-    def get_stats(self) -> Dict:
-        """获取统计"""
-        return {
-            "status": {p.value: s for p, s in self._status.items()},
-            "consecutive_failures": {p.value: f for p, f in self._consecutive_failures.items()},
-            "last_check": {p.value: t for p, t in self._last_check.items()},
-        }
+    def reset(self, provider: Optional[ModelProvider] = None) -> None:
+        """重置健康状态"""
+        if provider:
+            self._failures.pop(provider, None)
+            self._healthy.pop(provider, None)
+        else:
+            self._failures.clear()
+            self._healthy.clear()
 
 
 class ModelRouter:
     """
-    多模型智能路由器
+    模型路由器 - 角色匹配模式
     
-    核心功能:
-    - Fallback降级链: OpenRouter → Google → Groq → Cloudflare → 付费API
-    - 负载均衡: 同优先级内轮询/随机
-    - 成本优化: 优先免费模型，统计每日调用
-    - 健康检查: 定期检测Provider可用性
-    - 智能路由: 根据任务类型自动选模型
-    - 速率限制: 跟踪每个Provider调用计数
+    核心路由逻辑:
+    1. 如果指定了 agent_role → 使用角色配置的降级链
+    2. 否则按 task_type → 使用通用降级链
+    
+    降级链规则:
+    - 主力模型失败 → 备用模型
+    - 备用模型失败 → 全局fallback
+    - 全局fallback失败 → 返回错误
     """
     
     def __init__(
         self,
         config: Optional[RouteConfig] = None,
+        nvidia_key: Optional[str] = None,
+        nvidia_key_2: Optional[str] = None,
+        siliconflow_key: Optional[str] = None,
         openrouter_key: Optional[str] = None,
         google_ai_key: Optional[str] = None,
         groq_key: Optional[str] = None,
-        cloudflare_account_id: Optional[str] = None,
-        cloudflare_api_token: Optional[str] = None,
     ) -> None:
         """
         初始化路由器
         
         Args:
             config: 路由配置
+            nvidia_key: NVIDIA NIM API密钥
+            nvidia_key_2: NVIDIA NIM 备用密钥
+            siliconflow_key: 硅基流动 API密钥
             openrouter_key: OpenRouter API密钥
             google_ai_key: Google AI API密钥
             groq_key: Groq API密钥
-            cloudflare_account_id: Cloudflare账户ID
-            cloudflare_api_token: Cloudflare API Token
         """
-        self.config = config or DEFAULT_ROUTE_CONFIG
-        
-        # 初始化客户端
-        self._clients: Dict[ProviderPriority, BaseModel] = {}
-        
-        # OpenRouter客户端
-        if openrouter_key:
-            self._clients[ProviderPriority.OPENROUTER] = OpenRouterClient(
-                api_key=openrouter_key,
-                app_id=os.getenv("OPENROUTER_APP_ID")
-            )
-        
-        # Google AI客户端
-        if google_ai_key:
-            self._clients[ProviderPriority.GOOGLE_AI] = GoogleAIClient(
-                api_key=google_ai_key
-            )
-        
-        # Groq客户端
-        if groq_key:
-            self._clients[ProviderPriority.GROQ] = GroqClient(
-                api_key=groq_key
-            )
-        
-        # Cloudflare客户端（单独处理）
-        self._cloudflare_account_id = cloudflare_account_id
-        self._cloudflare_api_token = cloudflare_api_token
-        
-        # 健康状态
+        self.config = config or RouteConfig()
+        self._clients: Dict[ModelProvider, BaseModel] = {}
         self._health_status = HealthStatus()
         
-        # 每日调用统计
-        self._daily_stats: Dict[str, int] = {}  # model_id -> count
-        self._daily_reset_timestamp: float = 0
+        # 初始化客户端
+        self._init_nvidia_client(nvidia_key, nvidia_key_2)
+        self._init_siliconflow_client(siliconflow_key)
+        self._init_openrouter_client(openrouter_key)
+        self._init_google_ai_client(google_ai_key)
+        self._init_groq_client(groq_key)
+    
+    def _init_nvidia_client(self, key: Optional[str], key_2: Optional[str]) -> None:
+        """初始化NVIDIA客户端"""
+        key = key or os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY")
+        key_2 = key_2 or os.getenv("NVIDIA_API_KEY_2")
         
-        # 负载均衡索引
-        self._round_robin_index: Dict[ProviderPriority, int] = {}
+        if key or key_2:
+            try:
+                from core.ai.router.nvidia_client import NVIDIAClient
+                self._clients[ModelProvider.NVIDIA] = NVIDIAClient(
+                    api_key=key,
+                    api_key_2=key_2,
+                )
+            except Exception as e:
+                print(f"Failed to init NVIDIA client: {e}")
+    
+    def _init_siliconflow_client(self, key: Optional[str]) -> None:
+        """初始化硅基流动客户端"""
+        key = key or os.getenv("SILICONFLOW_KEY")
         
-        # 锁
-        self._lock = asyncio.Lock()
+        if key:
+            try:
+                from core.ai.router.siliconflow_client import SiliconFlowClient
+                self._clients[ModelProvider.SILICONFLOW] = SiliconFlowClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init SiliconFlow client: {e}")
+    
+    def _init_openrouter_client(self, key: Optional[str]) -> None:
+        """初始化OpenRouter客户端"""
+        key = key or os.getenv("OPENROUTER_API_KEY")
         
-        # 初始化时检查所有Provider
-        asyncio.create_task(self._initial_health_check())
+        if key:
+            try:
+                from core.ai.router.openrouter_client import OpenRouterClient
+                self._clients[ModelProvider.OPENROUTER] = OpenRouterClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init OpenRouter client: {e}")
     
-    async def _initial_health_check(self) -> None:
-        """初始健康检查"""
-        await self.check_all_providers()
+    def _init_google_ai_client(self, key: Optional[str]) -> None:
+        """初始化Google AI客户端"""
+        key = key or os.getenv("GOOGLE_AI_API_KEY")
+        
+        if key:
+            try:
+                from core.ai.router.google_ai_client import GoogleAIClient
+                self._clients[ModelProvider.GEMINI] = GoogleAIClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init Google AI client: {e}")
     
-    def _reset_daily_stats(self) -> None:
-        """重置每日统计"""
-        current_time = time.time()
-        if current_time >= self._daily_reset_timestamp:
-            self._daily_stats.clear()
-            self._daily_reset_timestamp = self._get_next_utc_midnight()
+    def _init_groq_client(self, key: Optional[str]) -> None:
+        """初始化Groq客户端"""
+        key = key or os.getenv("GROQ_API_KEY")
+        
+        if key:
+            try:
+                from core.ai.router.groq_client import GroqClient
+                self._clients[ModelProvider.GROQ] = GroqClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init Groq client: {e}")
     
-    def _get_next_utc_midnight(self) -> float:
-        """获取下一个UTC午夜时间戳"""
-        now = time.time()
-        seconds_until_midnight = 86400 - (now % 86400)
-        return now + seconds_until_midnight
-    
-    async def check_all_providers(self) -> Dict[ProviderPriority, bool]:
+    def _get_role_fallback_chain(self, role: AgentRole) -> List[tuple]:
         """
-        检查所有Provider的健康状态
+        获取角色的降级链
         
+        Args:
+            role: 角色枚举
+            
         Returns:
-            Provider健康状态字典
+            [(provider, model_id), ...]
         """
-        tasks = []
-        providers = list(self._clients.keys())
-        
-        for provider in providers:
-            tasks.append(self._check_provider_health(provider))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        status = {}
-        for provider, result in zip(providers, results):
-            if isinstance(result, Exception):
-                status[provider] = False
-            else:
-                status[provider] = result
-        
-        return status
+        return get_default_role_chain(role)
     
-    async def _check_provider_health(
-        self,
-        provider: ProviderPriority
-    ) -> bool:
-        """检查单个Provider健康状态"""
-        client = self._clients.get(provider)
-        if client is None:
-            return False
-        
-        try:
-            is_healthy = await asyncio.wait_for(
-                client.health_check(),
-                timeout=self.config.health_check_timeout
-            )
-            self._health_status.set_healthy(provider, is_healthy)
-            return is_healthy
-        except asyncio.TimeoutError:
-            self._health_status.set_healthy(provider, False)
-            return False
-        except Exception:
-            self._health_status.set_healthy(provider, False)
-            return False
-    
-    def _get_fallback_chain(
-        self,
-        task_type: Optional[TaskType] = None
-    ) -> List[ProviderPriority]:
+    def _get_task_fallback_chain(self, task_type: Optional[TaskType]) -> List[tuple]:
         """
-        获取降级链
+        获取任务类型的降级链
         
         Args:
             task_type: 任务类型
             
         Returns:
-            按优先级排序的Provider列表
+            [(provider, model_id), ...]
         """
-        if self.config.enable_free_first:
-            # 优先免费模型
-            chain = [
-                ProviderPriority.OPENROUTER,
-                ProviderPriority.GOOGLE_AI,
-                ProviderPriority.GROQ,
-                ProviderPriority.CLOUDFLARE,
-                # 付费模型（最低优先级）
-                ProviderPriority.SILICONFLOW,
-                ProviderPriority.ZHIPU,
-                ProviderPriority.MOONSHOT,
-                ProviderPriority.DASHSCOPE,
-                ProviderPriority.DEEPSEEK,
-            ]
-        else:
-            # 按可用性排序
-            chain = [
-                ProviderPriority.OPENROUTER,
-                ProviderPriority.GOOGLE_AI,
-                ProviderPriority.GROQ,
-                ProviderPriority.CLOUDFLARE,
-                ProviderPriority.SILICONFLOW,
-                ProviderPriority.ZHIPU,
-                ProviderPriority.MOONSHOT,
-                ProviderPriority.DASHSCOPE,
-                ProviderPriority.DEEPSEEK,
-            ]
-        
-        # 过滤掉没有客户端的Provider
-        return [p for p in chain if p in self._clients or p != ProviderPriority.CLOUDFLARE]
-    
-    def _select_model_for_provider(
-        self,
-        provider: ProviderPriority,
-        task_type: Optional[TaskType] = None
-    ) -> Optional[str]:
-        """
-        为Provider选择模型
-        
-        Args:
-            provider: Provider类型
-            task_type: 任务类型
-            
-        Returns:
-            模型ID或None
-        """
-        client = self._clients.get(provider)
-        if client is None:
-            return None
-        
-        # 如果客户端有select_model_for_task方法，使用它
-        if hasattr(client, "select_model_for_task"):
-            return client.select_model_for_task(task_type or TaskType.GENERAL)
-        
-        # 否则返回默认模型
-        return client.model_name
+        # 按优先级排序的降级链
+        chain = [
+            (ModelProvider.NVIDIA, "deepseek-ai/deepseek-v4-pro"),
+            (ModelProvider.SILICONFLOW, "deepseek-ai/DeepSeek-V3"),
+            (ModelProvider.OPENROUTER, "deepseek/deepseek-v4-flash:free"),
+            (ModelProvider.GEMINI, "gemini-2.0-flash-exp"),
+            (ModelProvider.GROQ, "llama-3.3-70b-specdec"),
+        ]
+        return chain
     
     async def chat(
         self,
         messages: List[Message],
+        agent_role: Optional[AgentRole] = None,
         task_type: Optional[TaskType] = None,
-        preferred_provider: Optional[ProviderPriority] = None,
+        model_id: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
         stream: bool = False,
@@ -288,8 +241,9 @@ class ModelRouter:
         
         Args:
             messages: 消息列表
-            task_type: 任务类型
-            preferred_provider: 优先使用的Provider
+            agent_role: 角色（优先）
+            task_type: 任务类型（无角色时使用）
+            model_id: 强制指定模型
             temperature: 温度参数
             max_tokens: 最大token数
             stream: 是否流式输出
@@ -297,78 +251,66 @@ class ModelRouter:
         Returns:
             ModelResponse对象
         """
-        self._reset_daily_stats()
-        
-        # 获取降级链
-        fallback_chain = self._get_fallback_chain(task_type)
-        
-        # 如果指定了优先Provider，将其放到最前面
-        if preferred_provider and preferred_provider in self._clients:
-            fallback_chain.remove(preferred_provider)
-            fallback_chain.insert(0, preferred_provider)
-        
         last_error: Optional[Exception] = None
         
-        for provider in fallback_chain:
-            # 检查健康状态
-            if self._health_status.should_skip(provider, self.config.unhealthy_threshold):
-                continue
-            
-            # 获取客户端
+        # 1. 如果指定了模型，直接使用
+        if model_id:
+            provider = self._guess_provider(model_id)
+            client = self._clients.get(provider)
+            if client:
+                try:
+                    return await client.chat(
+                        messages, temperature, max_tokens, stream, model_id, **kwargs
+                    )
+                except Exception as e:
+                    last_error = e
+        
+        # 2. 使用角色降级链
+        if agent_role:
+            chain = self._get_role_fallback_chain(agent_role)
+            config = get_role_config(agent_role)
+            role_display = config.display_name if config else agent_role.value
+        else:
+            # 3. 使用任务类型降级链
+            chain = self._get_task_fallback_chain(task_type)
+            role_display = "通用"
+        
+        print(f"[Router] {role_display}路由，降级链: {len(chain)}个Provider")
+        
+        for provider, fallback_model_id in chain:
+            # 检查客户端是否存在
             client = self._clients.get(provider)
             if client is None:
+                print(f"[Router] Provider {provider.value} 客户端未初始化，跳过")
                 continue
             
-            # 选择模型
-            model_id = self._select_model_for_provider(provider, task_type)
-            if model_id is None:
+            # 检查健康状态
+            if not self._health_status.is_healthy(provider):
+                print(f"[Router] Provider {provider.value} 健康检查失败，跳过")
                 continue
-            
-            # 检查该模型的每日限制
-            model_info = ALL_MODELS.get(model_id)
-            if model_info and model_info.daily_limit:
-                daily_count = self._daily_stats.get(model_id, 0)
-                if daily_count >= model_info.daily_limit:
-                    continue
             
             try:
-                # 尝试调用
-                response = await self._call_with_timeout(
-                    client.chat(
-                        messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stream=stream,
-                        **kwargs
-                    ),
-                    timeout=self.config.request_timeout if not stream else self.config.stream_timeout
+                print(f"[Router] 尝试 {provider.value}/{fallback_model_id}")
+                response = await client.chat(
+                    messages, temperature, max_tokens, stream, fallback_model_id, **kwargs
                 )
-                
-                # 成功，更新统计
-                self._daily_stats[model_id] = self._daily_stats.get(model_id, 0) + 1
-                self._health_status.set_healthy(provider, True)
-                
+                self._health_status.record_success(provider)
                 return response
                 
             except Exception as e:
+                print(f"[Router] Provider {provider.value} 失败: {e}")
+                self._health_status.record_failure(provider)
                 last_error = e
-                print(f"Provider {provider.value} 调用失败: {e}")
-                
-                # 标记Provider可能不健康
-                self._health_status.set_healthy(provider, False)
-                
-                # 如果禁用fallback，直接抛出错误
-                if not self.config.enable_provider_fallback:
-                    raise
+                continue
         
-        # 所有Provider都失败
         raise Exception(f"所有Provider调用失败: {last_error}")
     
     async def chat_stream(
         self,
         messages: List[Message],
+        agent_role: Optional[AgentRole] = None,
         task_type: Optional[TaskType] = None,
-        preferred_provider: Optional[ProviderPriority] = None,
+        model_id: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
         **kwargs
@@ -378,139 +320,105 @@ class ModelRouter:
         
         Args:
             messages: 消息列表
-            task_type: 任务类型
-            preferred_provider: 优先使用的Provider
+            agent_role: 角色（优先）
+            task_type: 任务类型（无角色时使用）
+            model_id: 强制指定模型
             temperature: 温度参数
             max_tokens: 最大token数
             
         Yields:
             文本片段
         """
-        self._reset_daily_stats()
-        
-        fallback_chain = self._get_fallback_chain(task_type)
-        
-        if preferred_provider and preferred_provider in self._clients:
-            fallback_chain.remove(preferred_provider)
-            fallback_chain.insert(0, preferred_provider)
-        
         last_error: Optional[Exception] = None
         
-        for provider in fallback_chain:
-            if self._health_status.should_skip(provider, self.config.unhealthy_threshold):
-                continue
-            
+        # 1. 如果指定了模型，直接使用
+        if model_id:
+            provider = self._guess_provider(model_id)
+            client = self._clients.get(provider)
+            if client:
+                try:
+                    async for chunk in client.chat_stream(
+                        messages, temperature, max_tokens, model_id, **kwargs
+                    ):
+                        yield chunk
+                    return
+                except Exception as e:
+                    last_error = e
+        
+        # 2. 使用角色降级链
+        if agent_role:
+            chain = self._get_role_fallback_chain(agent_role)
+            config = get_role_config(agent_role)
+            role_display = config.display_name if config else agent_role.value
+        else:
+            chain = self._get_task_fallback_chain(task_type)
+            role_display = "通用"
+        
+        for provider, fallback_model_id in chain:
             client = self._clients.get(provider)
             if client is None:
                 continue
             
-            model_id = self._select_model_for_provider(provider, task_type)
-            if model_id is None:
+            if not self._health_status.is_healthy(provider):
                 continue
             
-            model_info = ALL_MODELS.get(model_id)
-            if model_info and model_info.daily_limit:
-                daily_count = self._daily_stats.get(model_id, 0)
-                if daily_count >= model_info.daily_limit:
-                    continue
-            
             try:
-                self._daily_stats[model_id] = self._daily_stats.get(model_id, 0) + 1
-                self._health_status.set_healthy(provider, True)
-                
                 async for chunk in client.chat_stream(
-                    messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs
+                    messages, temperature, max_tokens, fallback_model_id, **kwargs
                 ):
                     yield chunk
-                
+                self._health_status.record_success(provider)
                 return
                 
             except Exception as e:
                 last_error = e
-                print(f"Provider {provider.value} 流式调用失败: {e}")
-                self._health_status.set_healthy(provider, False)
-                
-                if not self.config.enable_provider_fallback:
-                    raise
+                self._health_status.record_failure(provider)
+                continue
         
         raise Exception(f"所有Provider流式调用失败: {last_error}")
     
-    async def _call_with_timeout(
-        self,
-        coro,
-        timeout: float
-    ) -> ModelResponse:
-        """带超时的调用"""
-        return await asyncio.wait_for(coro, timeout=timeout)
+    def _guess_provider(self, model_id: str) -> ModelProvider:
+        """根据模型ID猜测Provider"""
+        model_lower = model_id.lower()
+        
+        if "deepseek" in model_lower or "nvidia" in model_lower or "qwen3" in model_lower:
+            if "nvidia" in model_lower:
+                return ModelProvider.NVIDIA
+            return ModelProvider.SILICONFLOW
+        if "qwen" in model_lower or "glm" in model_lower:
+            return ModelProvider.SILICONFLOW
+        if "kimi" in model_lower or "moonshot" in model_lower:
+            return ModelProvider.MOONSHOT
+        if "gemini" in model_lower:
+            return ModelProvider.GEMINI
+        if "groq" in model_lower or "llama" in model_lower:
+            return ModelProvider.GROQ
+        
+        return ModelProvider.OPENROUTER
     
     def get_stats(self) -> Dict:
         """获取路由器统计"""
-        self._reset_daily_stats()
-        
         return {
-            "config": {
-                "enable_free_first": self.config.enable_free_first,
-                "enable_provider_fallback": self.config.enable_provider_fallback,
-                "health_check_interval": self.config.health_check_interval,
-            },
             "providers": {
                 "enabled": [p.value for p in self._clients.keys()],
-                "health": self._health_status.get_stats(),
+                "health": {
+                    p.value: self._health_status.is_healthy(p)
+                    for p in self._clients.keys()
+                },
             },
-            "daily_usage": self._daily_stats,
-            "round_robin_index": {p.value: i for p, i in self._round_robin_index.items()},
-        }
-    
-    def get_available_models(
-        self,
-        task_type: Optional[TaskType] = None
-    ) -> Dict[ProviderPriority, List[str]]:
-        """获取所有可用模型"""
-        available = {}
-        
-        for provider, client in self._clients.items():
-            if hasattr(client, "get_available_models"):
-                models = client.get_available_models()
-                if models:
-                    available[provider] = models
-        
-        return available
-    
-    def get_usage_report(self) -> Dict:
-        """获取使用报告"""
-        self._reset_daily_stats()
-        
-        report = {
-            "summary": {
-                "total_calls": sum(self._daily_stats.values()),
-                "models_used": len(self._daily_stats),
-            },
-            "by_model": {},
-            "by_provider": {},
-        }
-        
-        for model_id, count in self._daily_stats.items():
-            model_info = ALL_MODELS.get(model_id)
-            if model_info:
-                report["by_model"][model_id] = {
-                    "count": count,
-                    "limit": model_info.daily_limit,
-                    "usage_percent": (
-                        count / model_info.daily_limit * 100
-                        if model_info.daily_limit else 0
-                    ),
-                    "provider": model_info.provider.value,
+            "roles": {
+                role.value: {
+                    "display": config.display_name,
+                    "primary": config.primary_model,
+                    "fallback": config.fallback_model,
                 }
-                
-                provider = model_info.provider
-                if provider.value not in report["by_provider"]:
-                    report["by_provider"][provider.value] = 0
-                report["by_provider"][provider.value] += count
-        
-        return report
+                for role, config in ROLE_MODEL_CONFIGS.items()
+            }
+        }
+    
+    def list_clients(self) -> List[ModelProvider]:
+        """列出已初始化的客户端"""
+        return list(self._clients.keys())
 
 
 # 全局路由器实例
@@ -518,19 +426,23 @@ _router_instance: Optional[ModelRouter] = None
 
 
 def get_router(
+    nvidia_key: Optional[str] = None,
+    nvidia_key_2: Optional[str] = None,
+    siliconflow_key: Optional[str] = None,
     openrouter_key: Optional[str] = None,
     google_ai_key: Optional[str] = None,
     groq_key: Optional[str] = None,
-    config: Optional[RouteConfig] = None,
 ) -> ModelRouter:
     """
     获取路由器单例
     
     Args:
+        nvidia_key: NVIDIA NIM API密钥
+        nvidia_key_2: NVIDIA NIM 备用密钥
+        siliconflow_key: 硅基流动 API密钥
         openrouter_key: OpenRouter API密钥
         google_ai_key: Google AI API密钥
         groq_key: Groq API密钥
-        config: 路由配置
         
     Returns:
         ModelRouter实例
@@ -539,12 +451,12 @@ def get_router(
     
     if _router_instance is None:
         _router_instance = ModelRouter(
-            config=config,
-            openrouter_key=openrouter_key or os.getenv("OPENROUTER_API_KEY"),
-            google_ai_key=google_ai_key or os.getenv("GOOGLE_AI_API_KEY"),
-            groq_key=groq_key or os.getenv("GROQ_API_KEY"),
-            cloudflare_account_id=os.getenv("CLOUDFLARE_ACCOUNT_ID"),
-            cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN"),
+            nvidia_key=nvidia_key,
+            nvidia_key_2=nvidia_key_2,
+            siliconflow_key=siliconflow_key,
+            openrouter_key=openrouter_key,
+            google_ai_key=google_ai_key,
+            groq_key=groq_key,
         )
     
     return _router_instance
