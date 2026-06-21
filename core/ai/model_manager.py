@@ -10,6 +10,10 @@ from core.ai.models.base_model import BaseModel, ModelProvider, Message, ModelRe
 from core.ai.models.gemini_model import GeminiModel
 from core.ai.models.groq_model import GroqModel
 from core.ai.models.ollama_model import OllamaModel
+from core.ai.models.zhipu_model import ZhipuModel
+from core.ai.models.deepseek_model import DeepseekModel
+from core.ai.models.moonshot_model import MoonshotModel
+from core.ai.models.dashscope_model import DashscopeModel
 
 
 @dataclass
@@ -57,6 +61,14 @@ class ModelManager:
             elif config.provider == ModelProvider.OLLAMA:
                 base_url = config.base_url or "http://localhost:11434"
                 model = OllamaModel(config.model_name, base_url, config.api_key)
+            elif config.provider == ModelProvider.ZHIPU:
+                model = ZhipuModel(config.api_key, config.model_name)
+            elif config.provider == ModelProvider.DEEPSEEK:
+                model = DeepseekModel(config.api_key, config.model_name)
+            elif config.provider == ModelProvider.MOONSHOT:
+                model = MoonshotModel(config.api_key, config.model_name)
+            elif config.provider == ModelProvider.DASHSCOPE:
+                model = DashscopeModel(config.api_key, config.model_name)
             else:
                 return False
             
