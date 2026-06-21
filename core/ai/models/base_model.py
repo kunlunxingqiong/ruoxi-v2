@@ -15,6 +15,14 @@ class ModelProvider(Enum):
     OLLAMA = "ollama"          # 本地免费
     TOGETHER = "together"      # Together AI (免费额度)
     OPENROUTER = "openrouter"  # OpenRouter (免费模型)
+    ZHIPU = "zhipu"            # 智谱GLM-4 (部分免费)
+    DEEPSEEK = "deepseek"      # DeepSeek (深度推理)
+    MOONSHOT = "moonshot"      # 月之暗面 (长上下文)
+    DASHSCOPE = "dashscope"    # 阿里百炼 (通义千问)
+    # 新增Provider
+    GOOGLE_AI = "google_ai"    # Google AI Studio (Gemini)
+    SILICONFLOW = "siliconflow"  # 硅基流动
+    CLOUDFLARE = "cloudflare"    # Cloudflare Workers AI
 
 
 @dataclass
