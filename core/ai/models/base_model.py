@@ -1,6 +1,9 @@
 """
 🌸 若曦V2 - AI模型基类
 定义统一模型接口，支持多模型切换
+
+更新日志:
+- 2026-07-13: 添加 NVIDIA 和 SILICONFLOW 模型提供商
 """
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Dict, List, Optional
@@ -10,19 +13,17 @@ from enum import Enum
 
 class ModelProvider(Enum):
     """模型提供商"""
-    GEMINI = "gemini"          # Google Gemini (永久免费)
-    GROQ = "groq"              # Groq云 (免费高速)
-    OLLAMA = "ollama"          # 本地免费
-    TOGETHER = "together"      # Together AI (免费额度)
-    OPENROUTER = "openrouter"  # OpenRouter (免费模型)
-    ZHIPU = "zhipu"            # 智谱GLM-4 (部分免费)
-    DEEPSEEK = "deepseek"      # DeepSeek (深度推理)
-    MOONSHOT = "moonshot"      # 月之暗面 (长上下文)
-    DASHSCOPE = "dashscope"    # 阿里百炼 (通义千问)
-    # 新增Provider
-    GOOGLE_AI = "google_ai"    # Google AI Studio (Gemini)
-    SILICONFLOW = "siliconflow"  # 硅基流动
-    CLOUDFLARE = "cloudflare"    # Cloudflare Workers AI
+    GEMINI = "gemini"              # Google Gemini (永久免费)
+    GROQ = "groq"                  # Groq云 (免费高速)
+    OLLAMA = "ollama"              # 本地免费
+    TOGETHER = "together"          # Together AI (免费额度)
+    OPENROUTER = "openrouter"      # OpenRouter (免费模型)
+    # --- 新增付费/企业级提供商 ---
+    NVIDIA = "nvidia"              # NVIDIA NIM 企业级推理 (117+模型)
+    SILICONFLOW = "siliconflow"    # 硅基流动 (92+模型)
+    ZHIPU = "zhipu"               # 智谱 GLM
+    MOONSHOT = "moonshot"          # 月之暗面 Kimi
+    DASHSCOPE = "dashscope"        # 阿里百炼
 
 
 @dataclass
@@ -106,15 +107,12 @@ class BaseModel(ABC):
         格式化消息为模型所需格式
         子类可覆盖
         """
-        return [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ]
+        return [{"role": m.role, "content": m.content} for m in messages]
     
     def get_info(self) -> Dict:
         """获取模型信息"""
         return {
+            "name": self.model_name,
             "provider": self.provider.value,
-            "model": self.model_name,
-            "base_url": self.base_url
+            "base_url": self.base_url,
         }
