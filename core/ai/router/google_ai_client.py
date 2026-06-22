@@ -182,6 +182,38 @@ class GoogleAIClient(BaseModel):
             model_id = self.model_name
         return GOOGLE_AI_MODELS.get(model_id)
     
+    async def discover_models(self) -> List[Dict]:
+        """
+        调用 /v1beta/models 接口获取可用模型列表
+        
+        Returns:
+            模型信息列表
+        """
+        try:
+            url = f"{self.base_url}/models?key={self.api_key}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    
+                    models = []
+                    for model in data.get("models", []):
+                        models.append({
+                            "id": model.get("name", ""),
+                            "name": model.get("displayName", ""),
+                            "context_length": model.get("inputTokenLimit", 128000),
+                            "description": model.get("description", ""),
+                            "version": model.get("version", ""),
+                        })
+                    return models
+        except Exception:
+            return []
+    
     async def chat(
         self,
         messages: List[Message],
@@ -399,9 +431,7 @@ class GoogleAIClient(BaseModel):
             服务是否可用
         """
         try:
-            url = (
-                f"{self.base_url}/models?key={self.api_key}"
-            )
+            url = f"{self.base_url}/models?key={self.api_key}"
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(
