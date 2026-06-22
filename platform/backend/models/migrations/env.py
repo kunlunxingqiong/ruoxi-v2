@@ -3,23 +3,34 @@
 数据库迁移环境设置
 """
 
-from logging.config import fileConfig
-import sys
 import os
+import sys
+from logging.config import fileConfig
 
 # 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
-
-from sqlalchemy import engine_from_config, pool
-from alembic import context
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+)
 
 # 导入模型基类和所有模型
-from models.database import Base
 from models.database import (
-    User, BloodPressureRecord, GlucoseRecord, WeightRecord,
-    SleepRecord, HeartRateRecord, Medication, MedicationLog,
-    HealthGoal, ChatMessage, Memory, Notification
+    Base,
+    BloodPressureRecord,
+    ChatMessage,
+    GlucoseRecord,
+    HealthGoal,
+    HeartRateRecord,
+    Medication,
+    MedicationLog,
+    Memory,
+    Notification,
+    SleepRecord,
+    User,
+    WeightRecord,
 )
+from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # 这是Alembic配置对象
 config = context.config
@@ -32,9 +43,11 @@ if config.config_file_name is not None:
 # 这是模型元的'Alembic支持版本'
 target_metadata = Base.metadata
 
+
 # 从环境变量获取数据库URL
 def get_url():
     import os
+
     return os.getenv("DATABASE_URL", "postgresql://ruoxi:ruoxi@localhost:5432/ruoxi")
 
 
@@ -57,7 +70,7 @@ def run_migrations_online() -> None:
     # 覆盖配置中的sqlalchemy.url
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = get_url()
-    
+
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",

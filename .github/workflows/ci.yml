@@ -12,6 +12,10 @@ env:
   PYTHON_VERSION: "3.11"
   POETRY_VERSION: "1.7.1"
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   # ==================== 代码质量检查 ====================
   lint:
@@ -176,7 +180,7 @@ jobs:
         output: 'trivy-results.sarif'
         
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'

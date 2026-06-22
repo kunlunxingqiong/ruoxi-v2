@@ -3,9 +3,9 @@
 🌸 若曦V2 - 统一CLI工具
 ruoxi [command] [options]
 """
-import sys
-import os
 import argparse
+import os
+import sys
 from pathlib import Path
 
 # 添加项目路径
@@ -48,9 +48,9 @@ def cmd_start(args):
 def cmd_test(args):
     """测试命令"""
     print(f"{Colors.BLUE}🧪 运行API测试...{Colors.END}")
-    from scripts.test_api import main
-    
     import asyncio
+
+    from scripts.test_api import main
     asyncio.run(main())
 
 

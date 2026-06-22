@@ -2,33 +2,33 @@
 🌸 若曦V2 Alembic 环境配置
 数据库迁移运行环境
 """
-from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
-from alembic import context
 
 import sys
+from logging.config import fileConfig
 from pathlib import Path
+
+from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # 添加项目根目录
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 导入模型
-from core.database_models import Base, config as app_config
+from core.database_models import Base
+from core.database_models import config as app_config
 
 # this is the Alembic Config object
 config = context.config
 
 # 从若曦配置获取数据库URL
-db_url = app_config.get('database.url')
+db_url = app_config.get("database.url")
 if db_url:
-    config.set_main_option('sqlalchemy.url', db_url)
+    config.set_main_option("sqlalchemy.url", db_url)
 else:
     # 使用SQLite作为默认
-    db_path = app_config.get('database.path', 'data/ruoxi.db')
-    config.set_main_option('sqlalchemy.url', f'sqlite:///{db_path}')
+    db_path = app_config.get("database.path", "data/ruoxi.db")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
@@ -61,9 +61,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

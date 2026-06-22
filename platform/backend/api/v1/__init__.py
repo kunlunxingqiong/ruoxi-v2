@@ -2,15 +2,16 @@
 🌸 若曦V2 API v1 路由集合
 所有v1版本API的入口
 """
+
 from fastapi import APIRouter
 
 from .auth import router as auth_router
 from .chat import router as chat_router
 from .chat_stream import router as chat_stream_router
-from .memory import router as memory_router
-from .health_records import router as health_router
-from .health_analysis import router as health_analysis_router
 from .emotion import router as emotion_router
+from .health_analysis import router as health_analysis_router
+from .health_records import router as health_router
+from .memory import router as memory_router
 
 # 创建v1路由器
 router = APIRouter()
@@ -34,6 +35,6 @@ async def v1_root():
             "/api/v1/auth",
             "/api/v1/chat",
             "/api/v1/memory",
-            "/api/v1/health"
-        ]
+            "/api/v1/health",
+        ],
     }

@@ -2,6 +2,7 @@
 🌸 若曦V2 FastAPI 主入口
 若曦的Web服务大脑，提供RESTful API接口
 """
+
 import os
 import sys
 from pathlib import Path
@@ -10,26 +11,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import WebSocket
 from contextlib import asynccontextmanager
+
+from api.health import router as health_router
+
+# 导入API路由
+from api.v1 import router as v1_router
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from middleware.monitoring import MonitoringMiddleware, get_prometheus_metrics
 
 # 导入中间件
 from middleware.rate_limit import RateLimitMiddleware
-from middleware.monitoring import MonitoringMiddleware, get_prometheus_metrics
 from websocket.chat_ws import websocket_endpoint
 
 # 导入核心模块
 from core.config_manager import config
-from core.log_manager import get_logger
-from core.exceptions import GlobalExceptionHandler, RuoxiException
 from core.database_models import db
-
-# 导入API路由
-from api.v1 import router as v1_router
-from api.health import router as health_router
+from core.exceptions import GlobalExceptionHandler, RuoxiException
+from core.log_manager import get_logger
 
 # 获取日志器
 logger = get_logger(__name__)
@@ -43,20 +44,22 @@ async def lifespan(app: FastAPI):
     """
     # 启动
     logger.info("🌸 若曦V2 服务启动中...")
-    
+
     # 初始化数据库
     try:
         db.create_tables()
         logger.info("✅ 数据库初始化完成")
     except Exception as e:
         logger.warning(f"⚠️ 数据库初始化警告: {e}")
-    
+
     # 加载配置
-    logger.info(f"📊 配置加载完成: {config.get('app.name')} v{config.get('app.version')}")
+    logger.info(
+        f"📊 配置加载完成: {config.get('app.name')} v{config.get('app.version')}"
+    )
     logger.info(f"🔧 环境: {config.get('app.debug') and '开发' or '生产'}")
-    
+
     yield
-    
+
     # 关闭
     logger.info("🌸 若曦V2 服务关闭中...")
 
@@ -93,7 +96,7 @@ app.add_middleware(MonitoringMiddleware)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器"""
     error_response = GlobalExceptionHandler.handle_exception(exc)
-    
+
     # 记录错误
     logger.error(
         f"请求异常: {request.url.path} - {exc}",
@@ -101,10 +104,10 @@ async def global_exception_handler(request: Request, exc: Exception):
             "path": request.url.path,
             "method": request.method,
             "error_code": error_response.get("error_code"),
-            "error_message": error_response.get("message")
-        }
+            "error_message": error_response.get("message"),
+        },
     )
-    
+
     # 如果是RuoxiException，提取状态码
     status_code = 500
     if isinstance(exc, RuoxiException):
@@ -112,11 +115,8 @@ async def global_exception_handler(request: Request, exc: Exception):
             status_code = 503  # AI服务问题
         elif exc.error_code.code >= 4000:
             status_code = 503  # 数据库问题
-    
-    return JSONResponse(
-        status_code=status_code,
-        content=error_response
-    )
+
+    return JSONResponse(status_code=status_code, content=error_response)
 
 
 # 请求日志中间件
@@ -124,25 +124,25 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def log_requests(request: Request, call_next):
     """记录所有请求"""
     import time
-    
+
     start_time = time.time()
-    
+
     # 记录请求开始
     logger.info(
         f"📥 请求 {request.method} {request.url.path}",
         extra={
             "method": request.method,
             "path": request.url.path,
-            "client": request.client.host if request.client else None
-        }
+            "client": request.client.host if request.client else None,
+        },
     )
-    
+
     # 处理请求
     response = await call_next(request)
-    
+
     # 计算响应时间
     process_time = (time.time() - start_time) * 1000  # 毫秒
-    
+
     # 记录请求结束
     logger.info(
         f"📤 响应 {request.method} {request.url.path} - {response.status_code} ({process_time:.2f}ms)",
@@ -150,14 +150,14 @@ async def log_requests(request: Request, call_next):
             "method": request.method,
             "path": request.url.path,
             "status_code": response.status_code,
-            "process_time_ms": process_time
-        }
+            "process_time_ms": process_time,
+        },
     )
-    
+
     # 添加响应头
     response.headers["X-Process-Time"] = f"{process_time:.2f}ms"
     response.headers["X-Ruoxi-Version"] = config.get("app.version")
-    
+
     return response
 
 
@@ -171,7 +171,7 @@ app.include_router(v1_router, prefix="/api/v1")  # v1 API
 async def metrics():
     """
     Prometheus监控指标
-    
+
     返回格式化的监控数据，供Grafana等工具使用
     """
     return get_prometheus_metrics()
@@ -182,7 +182,7 @@ async def metrics():
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """
     WebSocket实时聊天端点
-    
+
     支持流式AI响应和实时通知
     """
     await websocket_endpoint(websocket, session_id)
@@ -199,17 +199,17 @@ async def root():
         "status": "running",
         "docs": "/docs" if config.get("app.debug") else None,
         "health": "/health",
-        "websocket": "/ws/chat/{session_id}"
+        "websocket": "/ws/chat/{session_id}",
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     # 从配置获取端口
     port = config.get("api.port", 8000)
     host = "0.0.0.0" if not config.get("app.debug") else "127.0.0.1"
-    
+
     print("=" * 60)
     print("🌸 若曦V2 API 服务启动")
     print("=" * 60)
@@ -217,11 +217,11 @@ if __name__ == "__main__":
     print(f"文档地址: http://{host}:{port}/docs")
     print(f"健康检查: http://{host}:{port}/health")
     print("=" * 60)
-    
+
     uvicorn.run(
         "main:app",
         host=host,
         port=port,
         reload=config.get("app.debug", False),
-        log_level="info"
+        log_level="info",
     )

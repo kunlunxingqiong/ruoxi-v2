@@ -10,49 +10,51 @@
 
 模型来源: AFuclaw验证过的仓库API线路 (无需用户额外注册)
 """
+
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
-from dataclasses import dataclass
 
 
 class AgentRole(Enum):
     """团队成员角色"""
-    RUOXI = "ruoxi"            # 🌸 若曦 - 总管+编程
-    AFU = "afu"                # 🩺 阿芙 - AI医生
+
+    RUOXI = "ruoxi"  # 🌸 若曦 - 总管+编程
+    AFU = "afu"  # 🩺 阿芙 - AI医生
     RESEARCHER = "researcher"  # 🔍 小研 - 深度调研
-    CODER = "coder"            # 💻 小码 - 代码任务
+    CODER = "coder"  # 💻 小码 - 代码任务
 
 
 # ====== 角色默认模型 (核心注册表) ======
 ROLE_DEFAULT_MODELS: Dict[AgentRole, str] = {
-    AgentRole.RUOXI: "deepseek-ai/deepseek-v4-pro",       # NVIDIA NIM
-    AgentRole.AFU: "glm-4",                                 # 智谱
-    AgentRole.RESEARCHER: "moonshot-v1-128k",               # 月之暗面
-    AgentRole.CODER: "deepseek-ai/deepseek-coder",          # NVIDIA NIM
+    AgentRole.RUOXI: "deepseek-ai/deepseek-v4-pro",  # NVIDIA NIM
+    AgentRole.AFU: "glm-4",  # 智谱
+    AgentRole.RESEARCHER: "moonshot-v1-128k",  # 月之暗面
+    AgentRole.CODER: "deepseek-ai/deepseek-coder",  # NVIDIA NIM
 }
 
 # ====== 角色Fallback链 ======
 ROLE_FALLBACK_CHAINS: Dict[AgentRole, List[str]] = {
     AgentRole.RUOXI: [
-        "deepseek-ai/deepseek-v4-pro",          # NVIDIA主力
-        "deepseek/deepseek-v4-flash:free",       # OpenRouter免费
-        "Pro/deepseek-ai/DeepSeek-V3",           # 硅基流动
-        "qwen/qwen3-next-80b-a3b-instruct:free", # OpenRouter免费
+        "deepseek-ai/deepseek-v4-pro",  # NVIDIA主力
+        "deepseek/deepseek-v4-flash:free",  # OpenRouter免费
+        "Pro/deepseek-ai/DeepSeek-V3",  # 硅基流动
+        "qwen/qwen3-next-80b-a3b-instruct:free",  # OpenRouter免费
     ],
     AgentRole.AFU: [
-        "glm-4",                                  # 智谱主力
-        "z-ai/glm-4.5-air:free",                 # OpenRouter免费智谱
-        "deepseek-ai/deepseek-v4-pro",            # NVIDIA备用
+        "glm-4",  # 智谱主力
+        "z-ai/glm-4.5-air:free",  # OpenRouter免费智谱
+        "deepseek-ai/deepseek-v4-pro",  # NVIDIA备用
     ],
     AgentRole.RESEARCHER: [
-        "moonshot-v1-128k",                       # 月之暗面主力
-        "deepseek-ai/deepseek-v4-pro",            # NVIDIA长文本
-        "Pro/deepseek-ai/DeepSeek-V3",            # 硅基流动
+        "moonshot-v1-128k",  # 月之暗面主力
+        "deepseek-ai/deepseek-v4-pro",  # NVIDIA长文本
+        "Pro/deepseek-ai/DeepSeek-V3",  # 硅基流动
     ],
     AgentRole.CODER: [
-        "deepseek-ai/deepseek-coder",             # NVIDIA主力
-        "qwen/qwen3-coder:free",                  # OpenRouter免费
-        "Pro/deepseek-ai/DeepSeek-V3",            # 硅基流动
+        "deepseek-ai/deepseek-coder",  # NVIDIA主力
+        "qwen/qwen3-coder:free",  # OpenRouter免费
+        "Pro/deepseek-ai/DeepSeek-V3",  # 硅基流动
     ],
 }
 

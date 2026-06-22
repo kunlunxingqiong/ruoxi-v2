@@ -2,24 +2,25 @@
 🌸 若曦V2 - 测试配置
 Pytest全局配置和fixtures
 """
-import pytest
-import tempfile
+
 import os
+import tempfile
 from datetime import datetime, timedelta
 from typing import Generator
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # 确保测试环境先设置
 os.environ["TESTING"] = "true"
 
-# 导入应用组件
-from models.database import Base, get_db
 from platform.backend.main import app
 
+# 导入应用组件
+from models.database import Base, get_db
 
 # ==================== 数据库配置 ====================
 
@@ -32,11 +33,7 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 
-TestingSessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def override_get_db() -> Generator[Session, None, None]:
@@ -54,6 +51,7 @@ app.dependency_overrides[get_db] = override_get_db
 
 # ==================== Fixtures ====================
 
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
     """测试会话开始时创建数据库表"""
@@ -69,9 +67,9 @@ def db_session() -> Generator[Session, None, None]:
     connection = engine.connect()
     transaction = connection.begin()
     session = TestingSessionLocal(bind=connection)
-    
+
     yield session
-    
+
     session.close()
     transaction.rollback()
     connection.close()
@@ -80,17 +78,18 @@ def db_session() -> Generator[Session, None, None]:
 @pytest.fixture(scope="function")
 def client(db_session) -> Generator[TestClient, None, None]:
     """FastAPI测试客户端"""
+
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     with TestClient(app) as test_client:
         yield test_client
-    
+
     app.dependency_overrides.clear()
 
 
@@ -98,7 +97,7 @@ def client(db_session) -> Generator[TestClient, None, None]:
 def test_user(db_session: Session):
     """创建测试用户"""
     from models.database import User
-    
+
     user = User(
         id=1,
         username="testuser",
@@ -110,12 +109,12 @@ def test_user(db_session: Session):
         height_cm=175,
         weight_kg=70,
         is_active=True,
-        timezone="Asia/Shanghai"
+        timezone="Asia/Shanghai",
     )
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
-    
+
     return user
 
 
@@ -123,12 +122,12 @@ def test_user(db_session: Session):
 def auth_headers(test_user):
     """生成认证头"""
     from platform.backend.core_auth.jwt_auth import create_access_token
-    
+
     token = create_access_token(
         data={"user_id": test_user.id, "username": test_user.username},
-        expires_delta=timedelta(hours=1)
+        expires_delta=timedelta(hours=1),
     )
-    
+
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -136,7 +135,7 @@ def auth_headers(test_user):
 def test_bp_records(db_session: Session, test_user):
     """创建测试血压记录"""
     from models.database import BloodPressureRecord
-    
+
     records = [
         BloodPressureRecord(
             user_id=test_user.id,
@@ -144,34 +143,36 @@ def test_bp_records(db_session: Session, test_user):
             diastolic=80,
             pulse=75,
             category="normal",
-            measured_at=datetime.utcnow() - timedelta(days=i)
+            measured_at=datetime.utcnow() - timedelta(days=i),
         )
         for i in range(7)
     ]
-    
+
     # 添加异常血压记录
-    records.extend([
-        BloodPressureRecord(
-            user_id=test_user.id,
-            systolic=140,
-            diastolic=90,
-            pulse=80,
-            category="stage1",
-            measured_at=datetime.utcnow() - timedelta(days=10)
-        ),
-        BloodPressureRecord(
-            user_id=test_user.id,
-            systolic=185,
-            diastolic=120,
-            pulse=95,
-            category="crisis",
-            measured_at=datetime.utcnow() - timedelta(days=15)
-        )
-    ])
-    
+    records.extend(
+        [
+            BloodPressureRecord(
+                user_id=test_user.id,
+                systolic=140,
+                diastolic=90,
+                pulse=80,
+                category="stage1",
+                measured_at=datetime.utcnow() - timedelta(days=10),
+            ),
+            BloodPressureRecord(
+                user_id=test_user.id,
+                systolic=185,
+                diastolic=120,
+                pulse=95,
+                category="crisis",
+                measured_at=datetime.utcnow() - timedelta(days=15),
+            ),
+        ]
+    )
+
     db_session.add_all(records)
     db_session.commit()
-    
+
     return records
 
 
@@ -179,7 +180,7 @@ def test_bp_records(db_session: Session, test_user):
 def test_glucose_records(db_session: Session, test_user):
     """创建测试血糖记录"""
     from models.database import GlucoseRecord
-    
+
     records = [
         GlucoseRecord(
             user_id=test_user.id,
@@ -187,11 +188,11 @@ def test_glucose_records(db_session: Session, test_user):
             unit="mmol/L",
             meal_type="fasting",
             is_normal=True,
-            measured_at=datetime.utcnow() - timedelta(days=i)
+            measured_at=datetime.utcnow() - timedelta(days=i),
         )
         for i in range(5)
     ]
-    
+
     # 添加异常血糖
     records.append(
         GlucoseRecord(
@@ -200,10 +201,10 @@ def test_glucose_records(db_session: Session, test_user):
             unit="mmol/L",
             meal_type="post_meal",
             is_normal=False,
-            measured_at=datetime.utcnow() - timedelta(days=3)
+            measured_at=datetime.utcnow() - timedelta(days=3),
         )
     )
-    
+
     records.append(
         GlucoseRecord(
             user_id=test_user.id,
@@ -211,13 +212,13 @@ def test_glucose_records(db_session: Session, test_user):
             unit="mmol/L",
             meal_type="fasting",
             is_normal=False,
-            measured_at=datetime.utcnow() - timedelta(days=5)
+            measured_at=datetime.utcnow() - timedelta(days=5),
         )
     )
-    
+
     db_session.add_all(records)
     db_session.commit()
-    
+
     return records
 
 
@@ -225,7 +226,7 @@ def test_glucose_records(db_session: Session, test_user):
 def test_medication(db_session: Session, test_user):
     """创建测试用药"""
     from models.database import Medication
-    
+
     medication = Medication(
         id=1,
         user_id=test_user.id,
@@ -234,13 +235,13 @@ def test_medication(db_session: Session, test_user):
         frequency="daily",
         purpose="高血压",
         is_active=True,
-        reminder_enabled=True
+        reminder_enabled=True,
     )
-    
+
     db_session.add(medication)
     db_session.commit()
     db_session.refresh(medication)
-    
+
     return medication
 
 
@@ -248,46 +249,60 @@ def test_medication(db_session: Session, test_user):
 def test_sleep_records(db_session: Session, test_user):
     """创建测试睡眠记录"""
     from models.database import SleepRecord
-    
+
     records = [
         SleepRecord(
             user_id=test_user.id,
             bed_time=datetime.utcnow().replace(hour=22, minute=30) - timedelta(days=i),
-            wake_time=datetime.utcnow().replace(hour=6, minute=30) - timedelta(days=i-1),
+            wake_time=datetime.utcnow().replace(hour=6, minute=30)
+            - timedelta(days=i - 1),
             duration_minutes=480,
             sleep_quality=85,
-            sleep_efficiency=90
+            sleep_efficiency=90,
         )
         for i in range(7)
     ]
-    
+
     db_session.add_all(records)
     db_session.commit()
-    
+
     return records
 
 
 # ==================== 工具函数 ====================
 
+
 @pytest.fixture
 def assert_success_response():
     """断言成功响应"""
+
     def _assert(response, status_code: int = 200):
-        assert response.status_code == status_code, f"Expected {status_code}, got {response.status_code}: {response.text}"
+        assert (
+            response.status_code == status_code
+        ), f"Expected {status_code}, got {response.status_code}: {response.text}"
         data = response.json()
-        assert data.get("success") is True or "data" in data or "id" in data, f"Unexpected response: {data}"
+        assert (
+            data.get("success") is True or "data" in data or "id" in data
+        ), f"Unexpected response: {data}"
         return data
+
     return _assert
 
 
 @pytest.fixture
 def assert_error_response():
     """断言错误响应"""
+
     def _assert(response, status_code: int = 400):
-        assert response.status_code == status_code, f"Expected {status_code}, got {response.status_code}: {response.text}"
+        assert (
+            response.status_code == status_code
+        ), f"Expected {status_code}, got {response.status_code}: {response.text}"
         data = response.json()
-        assert "error" in data or "detail" in data, f"Expected error in response: {data}"
+        assert (
+            "error" in data or "detail" in data
+        ), f"Expected error in response: {data}"
         return data
+
     return _assert
 
 

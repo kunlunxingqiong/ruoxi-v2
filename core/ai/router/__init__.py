@@ -4,19 +4,18 @@
 支持9个Provider、400+模型、4个团队成员角色路由
 """
 
+from core.ai.router.model_registry import (
+    DiscoveredModel,
+    ModelRegistry,
+    model_registry,
+)
 from core.ai.router.route_config import (
-    AgentRole,
+    PROVIDER_CONFIGS,
     ROLE_DEFAULT_MODELS,
     ROLE_FALLBACK_CHAINS,
-    PROVIDER_CONFIGS,
-    get_role_model,
+    AgentRole,
     get_role_fallback_chain,
-)
-
-from core.ai.router.model_registry import (
-    ModelRegistry,
-    DiscoveredModel,
-    model_registry,
+    get_role_model,
 )
 
 __all__ = [
