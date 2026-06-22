@@ -1,6 +1,6 @@
 """
 🌸 若曦V2 - AI模型基类
-定义统一模型接口，支持多模型切换
+定义统一模型接口，支持多模型切换和动态模型发现
 """
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Dict, List, Optional
@@ -19,6 +19,10 @@ class ModelProvider(Enum):
     DEEPSEEK = "deepseek"      # DeepSeek (深度推理)
     MOONSHOT = "moonshot"      # 月之暗面 (长上下文)
     DASHSCOPE = "dashscope"    # 阿里百炼 (通义千问)
+    # 新增Provider (星穹 Claw-B 添加)
+    NVIDIA = "nvidia"          # NVIDIA NIM (117+模型)
+    SILICONFLOW = "siliconflow"  # 硅基流动 (92+模型)
+    CLOUDFLARE = "cloudflare"  # Cloudflare Workers AI
 
 
 @dataclass
@@ -43,6 +47,8 @@ class BaseModel(ABC):
     AI模型基类
     
     所有AI模型必须实现此接口，实现统一调用方式
+    
+    新增 (2026-06-22): discover_models() 类方法支持动态模型发现
     """
     
     def __init__(
@@ -87,7 +93,7 @@ class BaseModel(ABC):
     ) -> AsyncGenerator[str, None]:
         """
         流式聊天
-        
+
         生成文本片段流
         """
         pass
@@ -114,3 +120,20 @@ class BaseModel(ABC):
             "model": self.model_name,
             "base_url": self.base_url
         }
+    
+    @classmethod
+    def discover_models(cls, api_key: str, base_url: Optional[str] = None) -> List[Dict]:
+        """
+        动态发现该Provider可用的模型列表
+        
+        Args:
+            api_key: API密钥
+            base_url: API基础URL
+            
+        Returns:
+            模型信息列表 [{"id": str, "name": str, "owned_by": str}]
+            
+        Note:
+            默认实现返回空列表，子类可覆盖以支持动态发现
+        """
+        return []
