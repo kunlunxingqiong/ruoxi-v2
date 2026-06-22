@@ -36,6 +36,7 @@ class SiliconFlowClient(BaseModel):
     - 流式/非流式调用
     - 健康检查
     - 速率限制 (约120 req/min)
+    - 动态模型发现
     """
     
     BASE_URL = "https://api.siliconflow.cn/v1"
@@ -263,6 +264,37 @@ class SiliconFlowClient(BaseModel):
         except Exception:
             self._is_healthy = False
             return False
+    
+    async def discover_models(self) -> List[Dict]:
+        """
+        调用 /v1/models 接口获取可用模型列表
+        
+        Returns:
+            模型信息列表
+        """
+        try:
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.base_url}/models",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    
+                    models = []
+                    for model in data.get("data", []):
+                        models.append({
+                            "id": model.get("id", ""),
+                            "name": model.get("id", ""),
+                            "context_length": model.get("context_length", 128000),
+                            "description": model.get("description", ""),
+                        })
+                    return models
+        except Exception:
+            return []
     
     def get_available_models(self) -> List[str]:
         """
