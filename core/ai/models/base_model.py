@@ -3,7 +3,7 @@
 定义统一模型接口，支持多模型切换
 
 更新日志:
-- 2026-07-13: 添加 NVIDIA 和 SILICONFLOW 模型提供商
+- 2026-07-13: 添加 NVIDIA 和 SILICONFLOW 模型提供商，新增 CLOUDFLARE
 """
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Dict, List, Optional
@@ -24,6 +24,7 @@ class ModelProvider(Enum):
     ZHIPU = "zhipu"               # 智谱 GLM
     MOONSHOT = "moonshot"          # 月之暗面 Kimi
     DASHSCOPE = "dashscope"        # 阿里百炼
+    CLOUDFLARE = "cloudflare"      # Cloudflare Workers AI
 
 
 @dataclass
@@ -100,6 +101,16 @@ class BaseModel(ABC):
     @abstractmethod
     async def health_check(self) -> bool:
         """检查模型健康状态"""
+        pass
+    
+    @abstractmethod
+    async def discover_models(self) -> List[Dict]:
+        """
+        发现可用模型列表
+        
+        Returns:
+            模型信息列表
+        """
         pass
     
     def format_messages(self, messages: List[Message]) -> List[Dict]:
