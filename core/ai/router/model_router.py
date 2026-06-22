@@ -3,12 +3,13 @@
 
 核心功能:
 - 角色匹配路由: 根据团队成员角色自动选择对应模型
-- 多级降级链: 主力模型 → 备用模型 → 全局fallback
+- 多级降级链: 主力模型 → 备用模型 → 全局fallback → 动态模型池
 - 支持角色: RUOXI(若曦), AFU(阿芙), RESEARCHER(小研), CODER(小码)
-- 保留通用路由能力 (不指定角色时按任务类型路由)
+- 动态模型发现: 启动时从各Provider发现400+模型
+- 智能路由: 按角色或任务类型从全量模型池匹配
 
 更新日志:
-- 2026-07-13: 角色匹配模式，NVIDIA NIM和硅基流动支持
+- 2026-07-13: 新增动态模型发现支持，从400+模型池智能匹配
 """
 import asyncio
 import os
@@ -20,12 +21,11 @@ from core.ai.router.route_config import (
     AgentRole,
     ModelInfo,
     ProviderPriority,
-    RouteConfig,
     TaskType,
     ROLE_MODEL_CONFIGS,
     get_role_config,
     get_default_role_chain,
-    ALL_MODELS,
+    CORE_MODELS,
 )
 
 
@@ -94,38 +94,50 @@ class ModelRouter:
     核心路由逻辑:
     1. 如果指定了 agent_role → 使用角色配置的降级链
     2. 否则按 task_type → 使用通用降级链
+    3. 降级链耗尽 → 从动态模型池按能力智能匹配
     
     降级链规则:
     - 主力模型失败 → 备用模型
     - 备用模型失败 → 全局fallback
-    - 全局fallback失败 → 返回错误
+    - 全局fallback失败 → 从动态模型池匹配
+    - 最终兜底 → 返回错误
     """
     
     def __init__(
         self,
-        config: Optional[RouteConfig] = None,
         nvidia_key: Optional[str] = None,
         nvidia_key_2: Optional[str] = None,
         siliconflow_key: Optional[str] = None,
         openrouter_key: Optional[str] = None,
         google_ai_key: Optional[str] = None,
         groq_key: Optional[str] = None,
+        moonshot_key: Optional[str] = None,
+        zhipu_key: Optional[str] = None,
+        dashscope_key: Optional[str] = None,
+        cloudflare_account_id: Optional[str] = None,
+        cloudflare_api_token: Optional[str] = None,
+        enable_dynamic_discovery: bool = True,
     ) -> None:
         """
         初始化路由器
         
         Args:
-            config: 路由配置
             nvidia_key: NVIDIA NIM API密钥
             nvidia_key_2: NVIDIA NIM 备用密钥
             siliconflow_key: 硅基流动 API密钥
             openrouter_key: OpenRouter API密钥
             google_ai_key: Google AI API密钥
             groq_key: Groq API密钥
+            moonshot_key: 月之暗面 API密钥
+            zhipu_key: 智谱 API密钥
+            dashscope_key: 阿里百炼 API密钥
+            cloudflare_account_id: Cloudflare Account ID
+            cloudflare_api_token: Cloudflare API Token
+            enable_dynamic_discovery: 是否启用动态模型发现
         """
-        self.config = config or RouteConfig()
         self._clients: Dict[ModelProvider, BaseModel] = {}
         self._health_status = HealthStatus()
+        self._enable_dynamic_discovery = enable_dynamic_discovery
         
         # 初始化客户端
         self._init_nvidia_client(nvidia_key, nvidia_key_2)
@@ -133,6 +145,10 @@ class ModelRouter:
         self._init_openrouter_client(openrouter_key)
         self._init_google_ai_client(google_ai_key)
         self._init_groq_client(groq_key)
+        self._init_moonshot_client(moonshot_key)
+        self._init_zhipu_client(zhipu_key)
+        self._init_dashscope_client(dashscope_key)
+        self._init_cloudflare_client(cloudflare_account_id, cloudflare_api_token)
     
     def _init_nvidia_client(self, key: Optional[str], key_2: Optional[str]) -> None:
         """初始化NVIDIA客户端"""
@@ -193,6 +209,100 @@ class ModelRouter:
             except Exception as e:
                 print(f"Failed to init Groq client: {e}")
     
+    def _init_moonshot_client(self, key: Optional[str]) -> None:
+        """初始化月之暗面客户端"""
+        key = key or os.getenv("MOONSHOT_API_KEY")
+        
+        if key:
+            try:
+                from core.ai.router.moonshot_client import MoonshotClient
+                self._clients[ModelProvider.MOONSHOT] = MoonshotClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init Moonshot client: {e}")
+    
+    def _init_zhipu_client(self, key: Optional[str]) -> None:
+        """初始化智谱客户端"""
+        key = key or os.getenv("ZHIPU_API_KEY")
+        
+        if key:
+            try:
+                from core.ai.router.zhipu_client import ZhipuClient
+                self._clients[ModelProvider.ZHIPU] = ZhipuClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init Zhipu client: {e}")
+    
+    def _init_dashscope_client(self, key: Optional[str]) -> None:
+        """初始化阿里百炼客户端"""
+        key = key or os.getenv("DASHSCOPE_API_KEY")
+        
+        if key:
+            try:
+                from core.ai.router.dashscope_client import DashscopeClient
+                self._clients[ModelProvider.DASHSCOPE] = DashscopeClient(api_key=key)
+            except Exception as e:
+                print(f"Failed to init Dashscope client: {e}")
+    
+    def _init_cloudflare_client(self, account_id: Optional[str], api_token: Optional[str]) -> None:
+        """初始化Cloudflare客户端"""
+        account_id = account_id or os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        api_token = api_token or os.getenv("CLOUDFLARE_API_TOKEN")
+        
+        if account_id and api_token:
+            try:
+                from core.ai.router.cloudflare_client import CloudflareClient
+                self._clients[ModelProvider.CLOUDFLARE] = CloudflareClient(
+                    account_id=account_id,
+                    api_token=api_token,
+                )
+            except Exception as e:
+                print(f"Failed to init Cloudflare client: {e}")
+    
+    def _map_provider_priority(self, provider: ProviderPriority) -> ModelProvider:
+        """将 ProviderPriority 映射到 ModelProvider"""
+        mapping = {
+            ProviderPriority.NVIDIA: ModelProvider.NVIDIA,
+            ProviderPriority.SILICONFLOW: ModelProvider.SILICONFLOW,
+            ProviderPriority.OPENROUTER: ModelProvider.OPENROUTER,
+            ProviderPriority.GOOGLE_AI: ModelProvider.GEMINI,
+            ProviderPriority.GROQ: ModelProvider.GROQ,
+            ProviderPriority.CLOUDFLARE: ModelProvider.CLOUDFLARE,
+            ProviderPriority.ZHIPU: ModelProvider.ZHIPU,
+            ProviderPriority.MOONSHOT: ModelProvider.MOONSHOT,
+            ProviderPriority.DASHSCOPE: ModelProvider.DASHSCOPE,
+        }
+        return mapping.get(provider, ModelProvider.OPENROUTER)
+    
+    async def discover_models(self) -> int:
+        """
+        从所有Provider发现模型
+        
+        Returns:
+            发现的模型总数
+        """
+        from core.ai.router.model_registry import get_registry
+        
+        registry = get_registry()
+        
+        # 注册所有客户端
+        for provider_priority, client in [
+            (ProviderPriority.NVIDIA, self._clients.get(ModelProvider.NVIDIA)),
+            (ProviderPriority.SILICONFLOW, self._clients.get(ModelProvider.SILICONFLOW)),
+            (ProviderPriority.OPENROUTER, self._clients.get(ModelProvider.OPENROUTER)),
+            (ProviderPriority.GOOGLE_AI, self._clients.get(ModelProvider.GEMINI)),
+            (ProviderPriority.GROQ, self._clients.get(ModelProvider.GROQ)),
+            (ProviderPriority.MOONSHOT, self._clients.get(ModelProvider.MOONSHOT)),
+            (ProviderPriority.ZHIPU, self._clients.get(ModelProvider.ZHIPU)),
+            (ProviderPriority.DASHSCOPE, self._clients.get(ModelProvider.DASHSCOPE)),
+            (ProviderPriority.CLOUDFLARE, self._clients.get(ModelProvider.CLOUDFLARE)),
+        ]:
+            if client:
+                registry.register_client(provider_priority, client)
+        
+        # 执行动态发现
+        count = await registry.discover_all_models()
+        print(f"[Router] 动态发现 {count} 个模型")
+        return count
+    
     def _get_role_fallback_chain(self, role: AgentRole) -> List[tuple]:
         """
         获取角色的降级链
@@ -217,11 +327,12 @@ class ModelRouter:
         """
         # 按优先级排序的降级链
         chain = [
-            (ModelProvider.NVIDIA, "deepseek-ai/deepseek-v4-pro"),
-            (ModelProvider.SILICONFLOW, "deepseek-ai/DeepSeek-V3"),
-            (ModelProvider.OPENROUTER, "deepseek/deepseek-v4-flash:free"),
-            (ModelProvider.GEMINI, "gemini-2.0-flash-exp"),
-            (ModelProvider.GROQ, "llama-3.3-70b-specdec"),
+            (ProviderPriority.NVIDIA, "deepseek-ai/deepseek-v4-pro"),
+            (ProviderPriority.SILICONFLOW, "deepseek-ai/DeepSeek-V3"),
+            (ProviderPriority.OPENROUTER, "deepseek/deepseek-v4-flash:free"),
+            (ProviderPriority.GOOGLE_AI, "gemini-2.0-flash-exp"),
+            (ProviderPriority.GROQ, "llama-3.3-70b-versatile"),
+            (ProviderPriority.MOONSHOT, "moonshot-v1-128k"),
         ]
         return chain
     
@@ -277,31 +388,58 @@ class ModelRouter:
         
         print(f"[Router] {role_display}路由，降级链: {len(chain)}个Provider")
         
-        for provider, fallback_model_id in chain:
+        for provider_priority, fallback_model_id in chain:
+            model_provider = self._map_provider_priority(provider_priority)
+            
             # 检查客户端是否存在
-            client = self._clients.get(provider)
+            client = self._clients.get(model_provider)
             if client is None:
-                print(f"[Router] Provider {provider.value} 客户端未初始化，跳过")
+                print(f"[Router] Provider {provider_priority.name} 客户端未初始化，跳过")
                 continue
             
             # 检查健康状态
-            if not self._health_status.is_healthy(provider):
-                print(f"[Router] Provider {provider.value} 健康检查失败，跳过")
+            if not self._health_status.is_healthy(model_provider):
+                print(f"[Router] Provider {provider_priority.name} 健康检查失败，跳过")
                 continue
             
             try:
-                print(f"[Router] 尝试 {provider.value}/{fallback_model_id}")
+                print(f"[Router] 尝试 {provider_priority.name}/{fallback_model_id}")
                 response = await client.chat(
                     messages, temperature, max_tokens, stream, fallback_model_id, **kwargs
                 )
-                self._health_status.record_success(provider)
+                self._health_status.record_success(model_provider)
                 return response
                 
             except Exception as e:
-                print(f"[Router] Provider {provider.value} 失败: {e}")
-                self._health_status.record_failure(provider)
+                print(f"[Router] Provider {provider_priority.name} 失败: {e}")
+                self._health_status.record_failure(model_provider)
                 last_error = e
                 continue
+        
+        # 4. 尝试从动态模型池匹配
+        if self._enable_dynamic_discovery:
+            try:
+                from core.ai.router.model_registry import get_registry
+                registry = get_registry()
+                
+                # 确保已发现模型
+                if len(registry.get_all_models()) == 0:
+                    await self.discover_models()
+                
+                # 智能匹配
+                matched_model = registry.get_model_for_task(task_type, agent_role)
+                if matched_model:
+                    matched_provider = self._map_provider_priority(matched_model.provider)
+                    client = self._clients.get(matched_provider)
+                    if client:
+                        print(f"[Router] 从动态池匹配 {matched_model.provider_name}/{matched_model.model_id}")
+                        response = await client.chat(
+                            messages, temperature, max_tokens, stream, matched_model.model_id, **kwargs
+                        )
+                        self._health_status.record_success(matched_provider)
+                        return response
+            except Exception as e:
+                print(f"[Router] 动态匹配失败: {e}")
         
         raise Exception(f"所有Provider调用失败: {last_error}")
     
@@ -354,12 +492,13 @@ class ModelRouter:
             chain = self._get_task_fallback_chain(task_type)
             role_display = "通用"
         
-        for provider, fallback_model_id in chain:
-            client = self._clients.get(provider)
+        for provider_priority, fallback_model_id in chain:
+            model_provider = self._map_provider_priority(provider_priority)
+            client = self._clients.get(model_provider)
             if client is None:
                 continue
             
-            if not self._health_status.is_healthy(provider):
+            if not self._health_status.is_healthy(model_provider):
                 continue
             
             try:
@@ -367,12 +506,12 @@ class ModelRouter:
                     messages, temperature, max_tokens, fallback_model_id, **kwargs
                 ):
                     yield chunk
-                self._health_status.record_success(provider)
+                self._health_status.record_success(model_provider)
                 return
                 
             except Exception as e:
                 last_error = e
-                self._health_status.record_failure(provider)
+                self._health_status.record_failure(model_provider)
                 continue
         
         raise Exception(f"所有Provider流式调用失败: {last_error}")
@@ -393,14 +532,52 @@ class ModelRouter:
             return ModelProvider.GEMINI
         if "groq" in model_lower or "llama" in model_lower:
             return ModelProvider.GROQ
+        if "cloudflare" in model_lower or "@cf/" in model_lower:
+            return ModelProvider.CLOUDFLARE
         
         return ModelProvider.OPENROUTER
+    
+    async def route_by_capability(
+        self,
+        task_type: TaskType,
+        required_capabilities: Optional[Set[str]] = None,
+        preferred_provider: Optional[ProviderPriority] = None
+    ) -> Optional[tuple]:
+        """
+        从全量模型池按能力匹配模型
+        
+        Args:
+            task_type: 任务类型
+            required_capabilities: 必需能力 (如 {"vision", "streaming"})
+            preferred_provider: 首选Provider
+            
+        Returns:
+            (provider, model_id) 或 None
+        """
+        from core.ai.router.model_registry import get_registry
+        
+        registry = get_registry()
+        
+        # 确保已发现模型
+        if len(registry.get_all_models()) == 0:
+            await self.discover_models()
+        
+        matched = registry.get_model_for_task(
+            task_type=task_type,
+            agent_role=None,
+            preferred_provider=preferred_provider
+        )
+        
+        if matched:
+            return (matched.provider, matched.model_id)
+        return None
     
     def get_stats(self) -> Dict:
         """获取路由器统计"""
         return {
             "providers": {
                 "enabled": [p.value for p in self._clients.keys()],
+                "count": len(self._clients),
                 "health": {
                     p.value: self._health_status.is_healthy(p)
                     for p in self._clients.keys()
@@ -432,6 +609,11 @@ def get_router(
     openrouter_key: Optional[str] = None,
     google_ai_key: Optional[str] = None,
     groq_key: Optional[str] = None,
+    moonshot_key: Optional[str] = None,
+    zhipu_key: Optional[str] = None,
+    dashscope_key: Optional[str] = None,
+    cloudflare_account_id: Optional[str] = None,
+    cloudflare_api_token: Optional[str] = None,
 ) -> ModelRouter:
     """
     获取路由器单例
@@ -443,6 +625,11 @@ def get_router(
         openrouter_key: OpenRouter API密钥
         google_ai_key: Google AI API密钥
         groq_key: Groq API密钥
+        moonshot_key: 月之暗面 API密钥
+        zhipu_key: 智谱 API密钥
+        dashscope_key: 阿里百炼 API密钥
+        cloudflare_account_id: Cloudflare Account ID
+        cloudflare_api_token: Cloudflare API Token
         
     Returns:
         ModelRouter实例
@@ -457,6 +644,11 @@ def get_router(
             openrouter_key=openrouter_key,
             google_ai_key=google_ai_key,
             groq_key=groq_key,
+            moonshot_key=moonshot_key,
+            zhipu_key=zhipu_key,
+            dashscope_key=dashscope_key,
+            cloudflare_account_id=cloudflare_account_id,
+            cloudflare_api_token=cloudflare_api_token,
         )
     
     return _router_instance
