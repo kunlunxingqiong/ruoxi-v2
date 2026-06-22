@@ -156,6 +156,42 @@ class GroqClient(BaseModel):
             model_id = self.model_name
         return GROQ_MODELS.get(model_id)
     
+    async def discover_models(self) -> List[Dict]:
+        """
+        调用 /v1/models 接口获取可用模型列表
+        
+        Returns:
+            模型信息列表
+        """
+        try:
+            url = f"{self.base_url}/models"
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    
+                    models = []
+                    for model in data.get("data", []):
+                        models.append({
+                            "id": model.get("id", ""),
+                            "name": model.get("id", ""),
+                            "context_length": model.get("context_window", 8192),
+                            "description": model.get("name", ""),
+                        })
+                    return models
+        except Exception:
+            return []
+    
     async def chat(
         self,
         messages: List[Message],
