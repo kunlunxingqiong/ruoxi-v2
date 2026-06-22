@@ -1,6 +1,5 @@
 # 🌸 若曦V2 - CI/CD 流水线
 # 持续集成、测试、代码质量检查
-
 name: 🌸 CI/CD Pipeline
 
 on:
@@ -205,18 +204,18 @@ jobs:
     - name: Generate OpenAPI spec
       run: |
         python -c "
-from platform.backend.main import app
-import json
-from fastapi.openapi.utils import get_openapi
+        from platform.backend.main import app
+        import json
+        from fastapi.openapi.utils import get_openapi
 
-with open('openapi.json', 'w') as f:
-    json.dump(get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    ), f, indent=2)
-"
+        with open('openapi.json', 'w') as f:
+            json.dump(get_openapi(
+                title=app.title,
+                version=app.version,
+                description=app.description,
+                routes=app.routes,
+            ), f, indent=2)
+        "
         
     - name: Upload API docs
       uses: actions/upload-artifact@v4
